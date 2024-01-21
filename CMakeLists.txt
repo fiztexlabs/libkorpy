@@ -21,6 +21,7 @@ include(GNUInstallDirs)
 include(GenerateExportHeader)
 
 add_library(libkorpy SHARED 
+    libkorpy/libkorpy.rc
     libkorpy/korpy_export.h
     libkorpy/korpy.h
     libkorpy/korpy.cpp
