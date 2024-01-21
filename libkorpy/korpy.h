@@ -1,5 +1,4 @@
 #pragma once 
-#include <alien_export.h>
 #include <functional>
 #include <libkorpy/korpy_export.h>
 
@@ -9,15 +8,14 @@ extern "C"
 {
 #endif // __cplusplus
 
-	extern void ALIEN_EXPORT alienfunc(std::function<double *(double *)>, const char *, const int, const int);
-	extern void ALIEN_EXPORT alienfuncinfo(const char *, int *const, int *const);
-	extern void ALIEN_EXPORT callalien(const char *, double[], double *const);
-
-	void LIBKORPY_EXPORT alib();
-	void LIBKORPY_EXPORT afuncinfo(const char *, int *const, int *const);
-	void LIBKORPY_EXPORT callfunc(const char *, double[], double *const);
-
-	double *foo(double *const args);
+	/**
+	 * @brief Function load python module, which name is FuncName and execute korsar_mt function in this module
+	 * 
+	 * @param FuncName: Name of python file, which is launch for run
+	 * @param[out] Out: Results
+	 * @param Args: Arguments 
+	 */
+	void LIBKORPY_EXPORT callfunc(const char* FuncName, double* Out, double* const Args);
 
 #ifdef __cplusplus
 }

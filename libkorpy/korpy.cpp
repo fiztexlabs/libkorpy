@@ -1,41 +1,30 @@
 #include <libkorpy/korpy.h>
 #include <pybind11/embed.h>
+#include <pybind11/stl.h>
 #include <iostream>
+#include <vector>
 
 namespace py = pybind11;
 using namespace py::literals;
 
-void LIBKORPY_EXPORT alib()
-{
-	alienfunc(foo, "foo", 1, 2);
-}
+py::module_ extern_module_;
 
-void LIBKORPY_EXPORT afuncinfo(const char *FuncName, int *const ValNum, int *const ArgNum)
-{
-    alienfuncinfo(FuncName, ValNum, ArgNum);
-    return void();
-}
+py::scoped_interpreter guard{};
 
-void LIBKORPY_EXPORT callfunc(const char* FuncName, double Out[], double* const Args)
+void LIBKORPY_EXPORT callfunc(const char* FuncName, double* Out, double* const Args)
 {
-	callalien(FuncName, Out, Args);
+	static std::vector<double> out;
+
+    extern_module_ = py::module_::import(FuncName);
+
+	py::object result = extern_module_.attr("korsar_mt")(std::vector<double>(Args + 1, Args + 1 + size_t(Args[0])));
+	
+    out = result.cast<std::vector<double>>();
+
+	for (size_t i = 0; i < out.size(); ++i)
+	{
+		Out[i] = out.at(i);
+	}
+
 	return void();
-}
-
-double *foo(double *const args)
-{
-	static double out[1];
-	// out[0] = args[0] + args[1];
-
-    
-    py::scoped_interpreter guard{};
-
-    py::module_ calc = py::module_::import("calc");
-
-    py::object result = calc.attr("add")(args[0], args[1]);
-    out[0] = result.cast<double>();
-    
-    std::cout << out[0] << std::endl;
-
-	return out;
 }

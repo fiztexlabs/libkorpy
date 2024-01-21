@@ -1,0 +1,6 @@
+1.0 2.0
+ First output
+ 3.000000000E+00
+ Second output
+ 1.000000000E+00
+ %inf- KORSAR terminated because CHECK_ONLY = 3 or 13

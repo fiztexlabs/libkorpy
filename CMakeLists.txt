@@ -13,20 +13,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # declarations
 # -----------------------------------------
 
-set(CMAKE_BUILD_TYPE Release)
-# set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MT")
+# set(CMAKE_BUILD_TYPE Release)
 
 include(cmake/utils.cmake)
 include(GNUInstallDirs)
 
 include(GenerateExportHeader)
-# set(export_file_name "export_shared.h")
 
 add_library(libkorpy SHARED 
     libkorpy/korpy_export.h
     libkorpy/korpy.h
     libkorpy/korpy.cpp
-    # libkorpy/py_to_cpp.cpp
 )
 
 
@@ -34,30 +31,20 @@ add_library(libkorpy SHARED
 # libkorpy dependencies
 # -----------------------------------------
 
-find_package(Python 3.10 COMPONENTS Interpreter Development REQUIRED)
+find_package(Python COMPONENTS Interpreter Development REQUIRED)
 
 add_subdirectory(libs/pybind11)
 
-# Link alien compiled dll
-
-add_library(alien SHARED IMPORTED)
-
-set_property(TARGET alien PROPERTY
-    IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/libs/alien/alien.dll")
-set_property(TARGET alien PROPERTY
-    IMPORTED_IMPLIB "${CMAKE_SOURCE_DIR}/libs/alien/alien.lib")
-
-generate_export_header(alien EXPORT_FILE_NAME "${PROJECT_BINARY_DIR}/alien_export.h")
-
 target_link_libraries(libkorpy PRIVATE
     pybind11::embed
-    alien
 )
 
 
 # -----------------------------------------
 # libkorpy target
 # -----------------------------------------
+
+target_compile_options(libkorpy PUBLIC "-MT")
 
 # target_compile_definitions(libkorpy 
 #     PUBLIC 
@@ -72,12 +59,6 @@ target_include_directories(libkorpy
 win_copy_deps_to_target_dir(libkorpy
     pybind11::embed
 )
-
-# copy alien library to target dir
-add_custom_command(TARGET libkorpy POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -P "${libkorpy_SOURCE_DIR}/cmake/silent_copy.cmake"
-    "$<TARGET_FILE:alien>" "$<TARGET_FILE_DIR:libkorpy>"
-    COMMAND_EXPAND_LISTS)
 
 generate_export_header(libkorpy EXPORT_FILE_NAME "${PROJECT_BINARY_DIR}/korpy_export_shared.h")
 
