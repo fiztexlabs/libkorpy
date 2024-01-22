@@ -24,3 +24,15 @@ x64-Release/
 
 # Mac
 .DS_Store
+
+# KORSAR output
+out/
+korres
+korsav
+korlis
+kutlis
+log_calc.txt
+log_start.txt
+log_proc.txt
+log_restart.txt
+*.dat
