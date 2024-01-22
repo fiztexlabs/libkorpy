@@ -64,3 +64,10 @@ win_copy_deps_to_target_dir(libkorpy
 generate_export_header(libkorpy EXPORT_FILE_NAME "${PROJECT_BINARY_DIR}/korpy_export_shared.h")
 
 
+# -----------------------------------------
+# libkorpy test
+# -----------------------------------------
+
+add_subdirectory(tests)
+
+

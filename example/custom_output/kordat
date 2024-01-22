@@ -1,0 +1,4067 @@
+! *******************************
+! Автор: Коновалов И.А.
+! Подр. 49
+! тел.: 49-31
+! Описание нодализации: Модель стенда Л-800 с системой газа высокого
+! давления (СГВД)
+! Начало работы: 11-08-2023
+! *******************************
+
+!!bb Ключи основной процедуры
+
+! Ключ                 
+restart = 0;            
+title = 'vb.036.003';
+dt_max = 0.001;         
+dt_out = 0.01;           
+fin_tim = 2000.;           
+dt_sav = 1.;             
+append_res = 1;         
+append_sav = 1;         
+! noption = '5';
+check_only = 0;         
+local_err = 1.0e-4;     
+ngas = 'H2O, N2, H2, HE, O2';   
+dt_diag = dt_out;       
+inf = 1;                
+accel_stat = 0; 
+okbm = 1;
+! локализация файлов свойств
+! _workPath = 0;  ! HPC server
+! _workPath = 1;  ! barinov okbm
+! _workPath = 2;  ! barinov home
+! _workPath = 3;  ! konovalov okbm
+_workPath = 4;  ! konovalov home
+IF(_workPath==0) THEN ! HPC server
+	nwsp_dat='./nwsp_dat';
+ENDIF
+IF(_workPath==1) THEN ! barinov okbm
+	nwsp_dat='d:\Users\BARINOV\KORSAR_Projects\nwsp_dat';
+ENDIF
+IF(_workPath==2) THEN ! barinov home
+	nwsp_dat='d:\Users\...';
+ENDIF
+IF(_workPath==3) THEN ! konovalov okbm
+	nwsp_dat='n:\Dep49\Common\MCD\Utils\KORSAR-KUPOL\nwsp_dat';
+ENDIF
+IF(_workPath==4) THEN ! konovalov home
+	nwsp_dat='c:\codes\KORSAR\nwsp_dat';
+ENDIF
+
+_tauRest = 0.; ! момент рестарта
+_debug = 0; ! вывод отладочной информации
+_diag = 2;  ! режим вывода диагностики
+            ! 0 - нет диагностики
+            ! 1 - краткая
+            ! 2 - расширенная
+_monPer = 1.0;    ! Период вывода диагностики в файл мониторинга
+
+
+!!eb
+!!bb Общие глобальные переменные
+_t0C = 273.15;
+_tOffset = _t0C;
+
+_pi = 3.1415927;
+_gg = 9.81;
+_xgAir(1:4) = 0.,0.,0.757,0.243;
+_xgN2(1:4) = 0.,0.,9.999e-1,0.;
+_pAtm = 101.3e+03;
+_tAtm = 20.+_tOffset;
+_tsAtm = WS1P1(1,'P',_pAtm,2);
+
+_kgs = 98066.5;  ! кгс/см2, Па
+_MPa = 1.e6; ! МПа, Па
+_kPa = 1.e3; ! МПа, Па
+_MWt = 1.e6; ! МПа, Па
+_kWt = 1.e3; ! МПа, Па
+_atm = 101325.; ! атм, Па
+
+_timeMon = 0.;    ! Вспомогательные переменные диагностики
+_timeMonOld = 0.; ! -//-
+
+_x = 0.;    ! вспомогательная переменная float
+_y = 0.;    ! -//-                       float 
+_z = 0.;    ! -//-                       float 
+_spare = 0.;
+_i = 0;     ! -//-                       int 
+_j = 0;     ! -//-                       int 
+_k = 0;     ! -//-                       int 
+_l = 0;     ! -//-                       int 
+_m = 0;     ! -//-                       int 
+_n = 0;     ! -//-                       int 
+_n1 = 0;    ! -//-                       int 
+_n2 = 0;    ! -//-                       int
+_t1 = 0.;   ! -//-                       int
+
+! Свойства сплава ПТ-7М
+_t(1:100) = 0.;
+_lam(1:100) = 0.;
+_hc(1:100) = 0.;
+_ro(1:100) = 0.;
+
+IF(_workPath==0) THEN ! HPC server
+	_i = IODLC('/storage/raidbig/WORK/dep49/MATLIB/propPT7M.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==1) THEN ! barinov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\propPT7M.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==2) THEN ! barinov home
+	_i = IODLC('d:\Users\...',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==3) THEN ! konovalov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\propPT7M.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==4) THEN ! konovalov home
+	_i = IODLC('c:\codes\KORSAR\__MATLIB__\propPT7M.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+_t = _t+_tOffset;
+_tlamPT7M(1:2,1:_i) = 0.;
+_thcPT7M(1:2,1:_i) = 0.;
+_troPT7M(1:2,1:_i) = 0.;
+_tlamPT7M(1,1:_i) = _t;
+_tlamPT7M(2,1:_i) = _lam;
+_thcPT7M(1,1:_i) = _t;
+_thcPT7M(2,1:_i) = _hc;
+_troPT7M(1,1:_i) = _t;
+_troPT7M(2,1:_i) = _ro;
+
+! Свойства стали 08Х18Н10Т - внутрикорпусная
+_t(1:100) = 0.;
+_lam(1:100) = 0.;
+_hc(1:100) = 0.;
+_ro(1:100) = 0.;
+IF(_workPath==0) THEN ! HPC server
+	_i = IODLC('/storage/raidbig/WORK/dep49/MATLIB/prop08H18N10T.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==1) THEN ! barinov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\prop08H18N10T.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==2) THEN ! barinov home
+	_i = IODLC('d:\Users\...',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==3) THEN ! konovalov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\prop08H18N10T.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==4) THEN ! konovalov home
+	_i = IODLC('c:\codes\KORSAR\__MATLIB__\prop08H18N10T.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+_t = _t+_tOffset;
+_tlam08X18H10T(1:2,1:_i) = 0.;
+_thc08X18H10T(1:2,1:_i) = 0.;
+_tro08X18H10T(1:2,1:_i) = 0.;
+_tlam08X18H10T(1,1:_i) = _t;
+_tlam08X18H10T(2,1:_i) = _lam;
+_thc08X18H10T(1,1:_i) = _t;
+_thc08X18H10T(2,1:_i) = _hc;
+_tro08X18H10T(1,1:_i) = _t;
+_tro08X18H10T(2,1:_i) = _ro;
+   
+! Свойства стали 42ХНМ
+_t(1:100) = 0.;
+_lam(1:100) = 0.;
+_hc(1:100) = 0.;
+_ro(1:100) = 0.;
+IF(_workPath==0) THEN ! HPC server
+  _i = IODLC('/storage/raidbig/WORK/dep49/MATLIB/prop42HNM.mat',
+    $_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==1) THEN ! barinov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\prop42HNM.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==2) THEN ! barinov home
+	_i = IODLC('d:\Users\...',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==3) THEN ! konovalov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\prop42HNM.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==4) THEN ! konovalov home
+	_i = IODLC('c:\codes\KORSAR\__MATLIB__\prop42HNM.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+_t = _t+_tOffset;
+_tlam42HNM(1:2,1:_i) = 0.;
+_thc42HNM(1:2,1:_i) = 0.;
+_tro42HNM(1:2,1:_i) = 0.;
+_tlam42HNM(1,1:_i) = _t;
+_tlam42HNM(2,1:_i) = _lam;
+_thc42HNM(1,1:_i) = _t;
+_thc42HNM(2,1:_i) = _hc;
+_tro42HNM(1,1:_i) = _t;
+_tro42HNM(2,1:_i) = _ro;
+
+! Свойства стали 15Х2МФА (TODO: уточнить плотность и теплоемкость) - корпусная
+_t(1:100) = 0.;
+_lam(1:100) = 0.;
+_hc(1:100) = 0.;
+_ro(1:100) = 0.;
+IF(_workPath==0) THEN ! HPC server
+	_i = IODLC('/storage/raidbig/WORK/dep49/MATLIB/prop15H2MFA.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==1) THEN ! barinov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\prop15H2MFA.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==2) THEN ! barinov home
+	_i = IODLC('d:\Users\...',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==3) THEN ! konovalov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\prop15H2MFA.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==4) THEN ! konovalov home
+	_i = IODLC('c:\codes\KORSAR\__MATLIB__\prop15H2MFA.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+_t = _t+_tOffset;
+_tlam15H2MFA(1:2,1:_i) = 0.;
+_thc15H2MFA(1:2,1:_i) = 0.;
+_tro15H2MFA(1:2,1:_i) = 0.;
+_tlam15H2MFA(1,1:_i) = _t;
+_tlam15H2MFA(2,1:_i) = _lam;
+_thc15H2MFA(1,1:_i) = _t;
+_thc15H2MFA(2,1:_i) = _hc;
+_tro15H2MFA(1,1:_i) = _t;
+_tro15H2MFA(2,1:_i) = _ro;
+
+! Свойства стали 07Х25Н13 (TODO: уточнить свойства) - наплавка
+_t(1:100) = 0.;
+_lam(1:100) = 0.;
+_hc(1:100) = 0.;
+_ro(1:100) = 0.;
+IF(_workPath==0) THEN ! HPC server
+	_i = IODLC('/storage/raidbig/WORK/dep49/MATLIB/prop07H25N13.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==1) THEN ! barinov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\prop07H25N13.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==2) THEN ! barinov home
+	_i = IODLC('d:\Users\...',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==3) THEN ! konovalov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\prop07H25N13.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==4) THEN ! konovalov home
+	_i = IODLC('c:\codes\KORSAR\__MATLIB__\prop07H25N13.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+_t = _t+_tOffset;
+_tlam07H25N13(1:2,1:_i) = 0.;
+_thc07H25N13(1:2,1:_i) = 0.;
+_tro07H25N13(1:2,1:_i) = 0.;
+_tlam07H25N13(1,1:_i) = _t;
+_tlam07H25N13(2,1:_i) = _lam;
+_thc07H25N13(1,1:_i) = _t;
+_thc07H25N13(2,1:_i) = _hc;
+_tro07H25N13(1,1:_i) = _t;
+_tro07H25N13(2,1:_i) = _ro;
+
+! Свойства воды
+_t(1:100) = 0.;
+_lam(1:100) = 0.;
+_hc(1:100) = 0.;
+_ro(1:100) = 0.;
+IF(_workPath==0) THEN ! HPC server
+	_i = IODLC('/storage/raidbig/WORK/dep49/MATLIB/propH2O.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==1) THEN ! barinov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\propH2O.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==2) THEN ! barinov home
+	_i = IODLC('d:\Users\...',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==3) THEN ! konovalov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\propH2O.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==4) THEN ! konovalov home
+	_i = IODLC('c:\codes\KORSAR\__MATLIB__\propH2O.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+_t = _t+_tOffset;
+_tlamH2O(1:2,1:_i) = 0.;
+_thcH2O(1:2,1:_i) = 0.;
+_troH2O(1:2,1:_i) = 0.;
+_tlamH2O(1,1:_i) = _t;
+_tlamH2O(2,1:_i) = _lam;
+_thcH2O(1,1:_i) = _t;
+_thcH2O(2,1:_i) = _hc;
+_troH2O(1,1:_i) = _t;
+_troH2O(2,1:_i) = _ro;
+
+! Свойства воздуха
+_t(1:100) = 0.;
+_lam(1:100) = 0.;
+_hc(1:100) = 0.;
+_ro(1:100) = 0.;
+IF(_workPath==0) THEN ! HPC server
+	_i = IODLC('/storage/raidbig/WORK/dep49/MATLIB/propVozd.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==1) THEN ! barinov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\propVozd.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==2) THEN ! barinov home
+  _i = IODLC('d:\Users\...',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==3) THEN ! konovalov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\propVozd.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==4) THEN ! konovalov home
+	_i = IODLC('c:\codes\KORSAR\__MATLIB__\propVozd.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+_t = _t+_tOffset;
+_tlamVozd(1:2,1:_i) = 0.;
+_thcVozd(1:2,1:_i) = 0.;
+_troVozd(1:2,1:_i) = 0.;
+_tlamVozd(1,1:_i) = _t;
+_tlamVozd(2,1:_i) = _lam;
+_thcVozd(1,1:_i) = _t;
+_thcVozd(2,1:_i) = _hc;
+_troVozd(1,1:_i) = _t;
+_troVozd(2,1:_i) = _ro;
+
+! Свойства топливной композиции (вар.1)
+_t(1:100) = 0.;
+_lam(1:100) = 0.;
+_hc(1:100) = 0.;
+_ro(1:100) = 0.;
+IF(_workPath==0) THEN ! HPC server
+  _i = IODLC('/storage/raidbig/WORK/dep49/MATLIB/propToplKomp1.mat',
+    $_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==1) THEN ! barinov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\propToplKomp1.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==2) THEN ! barinov home
+	_i = IODLC('d:\Users\...',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==3) THEN ! konovalov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\propToplKomp1.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==4) THEN ! konovalov home
+	_i = IODLC('c:\codes\KORSAR\__MATLIB__\propToplKomp1.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+_t = _t+_tOffset;
+_tlamTopl(1:2,1:_i) = 0.;
+_thcTopl(1:2,1:_i) = 0.;
+_troTopl(1:2,1:_i) = 0.;
+_tlamTopl(1,1:_i) = _t;
+_tlamTopl(2,1:_i) = _lam;
+_thcTopl(1,1:_i) = _t;
+_thcTopl(2,1:_i) = _hc;
+_troTopl(1,1:_i) = _t;
+_troTopl(2,1:_i) = _ro;
+
+! Свойства бетона серпентинитового
+_t(1:100) = 0.;
+_lam(1:100) = 0.;
+_hc(1:100) = 0.;
+_ro(1:100) = 0.;
+IF(_workPath==0) THEN ! HPC server
+	_i = IODLC('/storage/raidbig/WORK/dep49/MATLIB/propBetSerp.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==1) THEN ! barinov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\propBetSerp.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==2) THEN ! barinov home
+	_i = IODLC('d:\Users\...',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==3) THEN ! konovalov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\propBetSerp.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==4) THEN ! konovalov home
+	_i = IODLC('c:\codes\KORSAR\__MATLIB__\propBetSerp.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+_t = _t+_tOffset;
+_tlamBetSerp(1:2,1:_i) = 0.;
+_thcBetSerp(1:2,1:_i) = 0.;
+_troBetSerp(1:2,1:_i) = 0.;
+_tlamBetSerp(1,1:_i) = _t;
+_tlamBetSerp(2,1:_i) = _lam;
+_thcBetSerp(1,1:_i) = _t;
+_thcBetSerp(2,1:_i) = _hc;
+_troBetSerp(1,1:_i) = _t;
+_troBetSerp(2,1:_i) = _ro;
+
+! Свойства теплоизоляции (асбест)
+_t(1:100) = 0.;
+_lam(1:100) = 0.;
+_hc(1:100) = 0.;
+_ro(1:100) = 0.;
+IF(_workPath==0) THEN ! HPC server
+	_i = IODLC('/storage/raidbig/WORK/dep49/MATLIB/propIzol.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==1) THEN ! barinov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\propIzol.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==2) THEN ! barinov home
+	_i = IODLC('d:\Users\...',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==3) THEN ! konovalov okbm
+	_i = IODLC('n:\Dep49\Common\MCD\Utils\__MATLIB__\propIzol.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+IF(_workPath==4) THEN ! konovalov home
+	_i = IODLC('c:\codes\KORSAR\__MATLIB__\propIzol.mat',
+		$_t,$_lam,$_hc,$_ro);
+ENDIF
+_t = _t+_tOffset;
+_tlamIzol(1:2,1:_i) = 0.;
+_thcIzol(1:2,1:_i) = 0.;
+_troIzol(1:2,1:_i) = 0.;
+_tlamIzol(1,1:_i) = _t;
+_tlamIzol(2,1:_i) = _lam;
+_thcIzol(1,1:_i) = _t;
+_thcIzol(2,1:_i) = _hc;
+_troIzol(1,1:_i) = _t;
+_troIzol(2,1:_i) = _ro;
+
+! Свойства хорошего проводника тепла
+_tlamInf(1:2,1:2) = 
+  273.,   1.e5
+ ,1000.,  1.e5;
+_thcInf(1:2,1:2) = 
+  273.,   1.e-5
+ ,1000.,  1.e-5;
+_troInf(1:2,1:2) = 
+  273.,   1.e-5
+ ,1000.,  1.e-5;
+
+!!eb 
+
+!!bb Переменные описания элементов L800
+
+!!bb Режимные и конструктивные параметры L800
+
+! Начальное давление в системе
+_P0 = 1.*_atm;
+
+! Начальная температура в системе
+_T0 = 20.+_t0C;
+
+! Тепловой поток нагревателей (через HCS4)
+_q_hpv = 360.e3/(36.*_pi*25.e-3*2.5155);
+
+! Режимная температура в СВД
+_Ttar = 325.+_t0C;
+
+! Режимное давление в системе КД-СВД
+_Ptar = 18.*_MPa;
+
+! Давление в ГВД
+_P0_comp_g = _Ptar;
+
+! Температура в ГВД
+_T0_comp_g = 20.+_t0C;
+
+! Давление в АВД
+_P0_comp_n2 = _Ptar;
+
+! Температура в АВД
+_T0_comp_n2 = 20.+_t0C;
+
+! Температура старта разогрева
+_T_start = 20.+_t0C;
+
+! Давление старта разогрева
+_P_start = 5.*_MPa;
+
+! Давление в компенсирующей группе баллонов N2
+_P_n2_comp = _P_start;
+
+! Температура в компенсирующей группе баллонов N2
+_T_n2_comp = _T_start;
+
+! объем компенсирующей группы азотных баллонов
+_dV_start = 0.55; 
+
+! начальное содержание азота в газовой фазе КД
+_xng_n2_0 = 1.;
+
+
+!!eb
+
+!!bb Переменные управляющих событий
+_dTs = 0.;		  ! Недогрев до Ts в СВД
+
+_qfl1 = 0;		  ! Флаг включения нагревателей
+_val3 = -1;		  ! Флаг открыти/закрытия VAL3
+_mov_val3 = -1;	  ! Признак движения задвижки
+_dt_curr = 0.;	  ! Текущий максимальный шаг интегрирования
+_dt_val3 = -1;    ! Флаг дробления шага перед открытием VAL3
+_dt_qfl1 = -1;	  ! Флаг дробления шага перед включением нагревателей
+
+! временные отметки
+_t_1 = 0.;
+_t_2 = 0.;
+_t_3 = 0.;
+_t_4 = 0.;
+_t_5 = 0.;
+
+_n_jnb = 0;
+_setP0_pc_hpv = 3;
+_setPtar_pc_hpv = 3;
+_setPtar =0;
+_close_val4 = 0;
+_open_val4 = 0;
+_close_val5 = 0;
+_open_val5 = 0;
+_close_val7 = 0;
+_open_val7 = 0;
+_setP0_hpv = 0;
+_heat_mod = 0;
+_exp_mod = 0;
+_connect_comp_n2 =0;
+_ttar_done = 0;
+_hpv_pc_line = 1;
+_setTtar = 0;
+!!eb
+
+!!bb CH L800 (CH)
+! Сдвиг номеров каналов модели
+_chOfstL800 = 0;
+! Число элементов модели общее
+_numChL800 = 8;
+! Элементы  модели
+_chL800(1:_numChL800) = 1:8;
+! Число интегрируемых элементов модели
+_numLayChL800 = 8;
+! Интегрируемые элементы модели
+_chLayL800(1:_numLayChL800) = 1:8;
+
+_dzFullChL800 = 0.; 
+_dhFullChL800 = 0.; 
+_vFullChL800 = 0.; 
+_dzFullHcsL800 = 0.; 
+_f1FullHcsL800 = 0.; 
+_f2FullHcsL800 = 0.; 
+_mChL800 = 0.;
+
+! ===== Размерные ключи
+_nChL800(1:_numChL800) = 3;
+
+_nChL800(1:2) = 12;   ! сосуд высокого давления (СВД)
+_nChL800(3) = 10;     ! трасса LOCA
+_nChL800(4) = 4;      ! трасса СВД-КД
+_nChL800(5) = 3;      ! трасса баллон-КД
+_nChL800(6) = 3;			! трасса САВД-КД
+_nChL800(7) = 3;			! трасса от системы подпитки
+_nChL800(8) = 3;			! трасса КД-трасса сброса среды
+
+_nMaxChL800 = MAXA(_nChL800);
+
+!!eb
+
+!!bb SCH L800 (SC)
+! Сдвиг номеров каналов модели
+_scOfstL800 = 0;
+! Число элементов модели общее
+_numScL800 = 1;
+! Элементы  модели
+_scL800(1:_numScL800) = 
+  1;  ! 
+! Число интегрируемых элементов модели
+_numLayScL800 = 1;
+! Интегрируемые элементы модели
+_scLayL800(1:_numLayScL800) = 1;
+
+!!eb
+
+!!bb BVOL_T L800 (BV)
+! Сдвиг номеров элементов модели
+_bvOfstL800 = 0;
+! Число элементов модели общее
+_numBvL800 = 3;
+! Элементы  модели
+_bvL800(1:_numBvL800) = 
+	1,		! Противодавление на выходе из CH3
+	2,		! САВД
+	3;		! система подпитки
+! Число интегрируемых элементов модели
+_numLayBvL800 = 3;
+! Интегрируемые элементы модели
+_bvLayL800(1:_numLayBvL800) = 1:3;
+
+!!eb BV L800
+
+!!bb JUNB L800 (JNB)
+! Сдвиг номеров элементов модели
+_jnbOfstL800 = 0;
+! Число элементов модели общее
+_numJnbL800 = 1;
+! Элементы  модели
+_jnbL800(1:_numJnbL800) = 
+	1;  ! СУ 1
+! Число интегрируемых элементов модели
+_numLayJnbL800 = 1;
+! Интегрируемые элементы модели
+_jnbLayL800(1:_numLayJnbL800) = 1:1;
+
+!!eb JNB L800
+
+!!bb LR L800 (LR)
+! Сдвиг номеров элементов модели
+_lrOfstL800 = 0;
+! Число элементов модели общее
+_numLrL800 = 10;
+! Элементы  модели
+_lrL800(1:_numLrL800) = 
+  1,  ! КГС трассы LOCA до СУ 1
+  2,  ! КГС СУ 1
+  3,  ! КГС перехода из СУ 1 на Ду400
+  4,  ! КГС трассы сброса до МР1,2
+  5,  ! КГС трассы сброса после МР1,2
+  6,  ! КГС трассы СВД-КД
+  7,  ! КГС трассы N2-КД
+  8,	! КГС трассы САВД-КД
+  9,	! КГС трассы подпитка - СВД
+  10;	! КГС трассы КД - трасса сброса
+! Число интегрируемых элементов модели
+_numLayLrL800 = 10;
+! Интегрируемые элементы модели
+_lrLayL800(1:_numLayLrL800) = 1:10;
+
+!!eb
+
+!!bb VAL L800 (VAL)
+! Сдвиг номеров элементов модели
+_valOfstL800 = 0;
+! Число элементов модели общее
+_numValL800 = 7;
+! Элементы  модели
+_valL800(1:_numValL800) = 
+	1,  ! КЗ1,2
+	2,  ! МР1,2
+	3,  ! Кз14
+	4,  ! КД-СВД
+	5,	! САВД
+	6,	! подпитка
+	7;	! КД-сброс
+! Число интегрируемых элементов модели
+_numLayValL800 = 7;
+! Интегрируемые элементы модели
+_valLayL800(1:_numLayValL800) = 1:7;
+
+!!eb
+
+!!bb SLVES L800 (SLV)
+! Сдвиг номеров элементов модели
+_slvOfstL800 = 0;
+! Число элементов модели общее
+_numSlvL800 = 2;
+! Элементы  модели
+_slvL800(1:_numSlvL800) =
+  1,  ! баллон N2
+  2;  ! КД
+! Число интегрируемых элементов модели
+_numLaySlvL800 = 2;
+! Интегрируемые элементы модели
+_slvLayL800(1:_numLaySlvL800) = 1:2;
+
+!!eb
+
+!!bb JN L800 (JN)
+! Сдвиг номеров элементов модели
+_jnOfstL800 = 0;
+! Число элементов модели общее
+_numJnL800 = 23;
+! Элементы  модели
+_jnL800(1:_numJnL800) = 1:23;
+! Число интегрируемых элементов модели
+_numLayJnL800 = 10;
+! Интегрируемые элементы модели
+_jnLayL800(1:_numLayJnL800) = 1:10;
+! ===== Объявление
+_sJnL800(1:_numJnL800) = 1.e-7;
+_dzJnL800(1:_numJnL800) = 1.e-2;
+_dhJnL800(1:_numJnL800) = 0.;
+_sminJnL800(1:_numJnL800) = 0.;
+_muJnL800(1:_numJnL800) = 1.;
+_typeJnL800(1:_numJnL800) = -1;
+_jinJnL800(1:_numJnL800) = 0.5;
+_jouJnL800(1:_numJnL800) = 0.5;
+_dxdzJnL800(1:_numJnL800,1:2) = 0.;
+_csiJnL800(1:_numJnL800,1:2) = 1.;
+! ===== Инициализация
+! СВД
+_sJnL800(1:10)=
+	0.030211272,
+	0.04779108 ,
+	0.05823792 ,
+	0.08404338 ,
+	0.10237808 ,
+	0.20575698 ,
+	0.83448    ,
+	0.83448    ,
+	0.83448    ,
+	0.83448    ;
+
+_dxdzJnL800(1:10,1)=
+	0.63336,
+	0.88502,
+	1.07848,
+	1.21802,
+	1.34708,
+	1.43886,
+	1.52   ,
+	1.52   ,
+	1.52   ,
+	1.52   ;
+
+_dxdzJnL800(1:10,2)=
+	0.0477,
+	0.054 ,
+	0.054 ,
+	0.069 ,
+	0.076 ,
+	0.143 ,
+	0.549 ,
+	0.549 ,
+	0.549 ,
+	0.549 ;
+
+
+!КД
+_sJnL800(11:23)=0.021455388,0.028665486,0.038229172,0.060081172,
+0.602525,0.602525,0.602525,0.602525,0.602525,0.086706064,0.059430381,
+0.038479772,0.017563684;
+_dxdzJnL800(11:23,1)=0.532965518,0.569655172,0.627586206,0.66137931,0.7,
+0.7,0.7,0.7,0.7,0.66137931,0.588965518,0.477931034,0.349034482;
+_dxdzJnL800(11:23,2)=0.040256615,0.050320769,0.060914615,0.090842231,
+0.86075,0.86075,0.86075,0.86075,0.86075,0.131098846,0.100906385,
+0.080513231,0.050320769;
+
+
+_dzJnL800(1:_numJnL800) = 1.e-2;
+_dhJnL800(1:_numJnL800) = 0.;
+_sminJnL800(1:_numJnL800) = _sJnL800(1:_numJnL800);
+_muJnL800(1:_numJnL800) = 1.0;
+_typeJnL800(1:_numJnL800) = -1;
+_jinJnL800(1:_numJnL800) = 0.5;
+_jouJnL800(1:_numJnL800) = 0.5;
+_csiJnL800(1:_numJnL800,1:2) = 0.05;
+
+!!eb
+
+!!bb HCS L800 (HCS)
+! Сдвиг номеров элементов модели
+_hcsOfstL800 = 0;
+! Число элементов модели общее
+_numHcsL800 = 5;
+! Элементы  модели
+_hcsL800(1:_numHcsL800) = 1:5;
+! Число интегрируемых элементов модели
+_numLayHcsL800 = 5;
+! Интегрируемые элементы модели
+_hcsLayL800(1:_numLayHcsL800) = 1:5;
+! ===== Размерные ключи
+_nHcsL800(1:_numHcsL800) = 2;
+
+_nHcsL800(1) = 11;	! СВД (днище+стенка)
+_nHcsL800(2) = 2;		! КД
+_nHcsL800(3) = 2;		! баллон N2
+_nHcsL800(4) = 5;		! нагреватели
+_nHcsL800(5) = 2;		! СВД (крышка)
+
+_nMaxHcsL800 = MAXA(_nHcsL800);
+
+!!eb
+
+!!bb Датчики L800
+
+_l800_sens_CH1(1:150) = 0.;
+_l800_sens_CH2(1:150) = 0.;
+_l800_sens_CH3(1:150) = 0.;
+_l800_sens_CH4(1:150) = 0.;
+_l800_sens_CH5(1:150) = 0.;
+_l800_sens_CH6(1:150) = 0.;
+_l800_sens_CH7(1:150) = 0.;
+_l800_sens_CH8(1:150) = 0.;
+_l800_sens_CH9(1:150) = 0.;
+_l800_sens_CH10(1:150) = 0.;
+_l800_sens_SLV1(1:6) = 0.;
+_l800_sens_SLV2(1:6) = 0.;
+_l800_sens_SLV3(1:6) = 0.;
+_l800_sens_VALs(1:10) = 0.;
+_l800_sens_VALs_csi(1:10) = 0.;
+
+_IO(1:1512) = 0.;
+_IO1(1:5) = 0.;
+_errorCode = 0.;
+!!eb
+
+!!eb
+
+!!bb Переменные описания элементов HPGS
+
+!!bb Режимные и конструктивные параметры HPGS
+
+! Начальное давление в СГВД
+_P0_hpgs = _P0;
+
+! Начальная температура в СГВД
+_T0_hpgs = _T0;
+
+! Рабочее давление в ресивере СГВД
+_Pwork_hpgs = 20.*_MPa;
+
+! Поддерживаемое давление
+_Ptar_hpgs = _Ptar;
+
+!!eb
+
+!!bb Переменные управляющих событий
+_hpgs_setPwork = 3;
+_hpgs_experimant = 0;
+
+
+_hpgs_t_1 = 0.;
+_hpgs_t_2 = 0.;
+_hpgs_t_3 = 0.;
+_hpgs_t_4 = 0.;
+!!eb
+
+!!bb CH HPGS (CH)
+! Сдвиг номеров каналов модели
+_chOfstHPGS = _chOfstL800+_numChL800;
+! Число элементов модели общее
+_numChHPGS = 2;
+! Элементы  модели
+_chHPGS(1:_numChHPGS) = 1:2;
+! Число интегрируемых элементов модели
+_numLayChHPGS = 2;
+! Интегрируемые элементы модели
+_chLayHPGS(1:_numLayChHPGS) = 1:2;
+
+_dzFullChHPGS = 0.; 
+_dhFullChHPGS = 0.; 
+_vFullChHPGS = 0.; 
+_dzFullHcsHPGS = 0.; 
+_f1FullHcsHPGS = 0.; 
+_f2FullHcsHPGS = 0.; 
+_mChHPGS = 0.;
+
+! ===== Размерные ключи
+_nChHPGS(1:_numChHPGS) = 3;
+
+_nChHPGS(1) = 5; 
+_nChHPGS(2) = 3;
+_nMaxChHPGS = MAXA(_nChHPGS);
+
+!!eb
+
+!!bb SMASS_T HPGS (SM)
+! Сдвиг номеров элементов модели
+_smOfstHPGS = 0;
+! Число элементов модели общее
+_numSmHPGS = 1;
+! Элементы  модели
+_smHPGS(1:_numSmHPGS) = 
+  1;
+! Число интегрируемых элементов модели
+_numLaySmHPGS = 1;
+! Интегрируемые элементы модели
+_smLayHPGS(1:_numLaySmHPGS) = 1:1;
+
+!!eb
+
+!!bb CONT HPGS (CNT)
+! Сдвиг номеров элементов модели
+_cntOfstHPGS = 0;
+! Число элементов модели общее
+_numCntHPGS = 1;
+! Элементы  модели
+_cntHPGS(1:_numCntHPGS) = 1:1;
+! Число интегрируемых элементов модели
+_numLayCntHPGS = 1;
+! Интегрируемые элементы модели
+_cntLayHPGS(1:_numLayCntHPGS) = 1;
+! ===== Размерные ключи
+_nCntHPGS(1:_numCntHPGS) = 1;
+_nCntHPGS(1) = 1;
+_nMaxCntHPGS = MAXA(_nCntHPGS);
+_kCntHPGS(1:_numCntHPGS) = 2;
+_kCntHPGS(1) = 2;
+_kMaxCntHPGS = MAXA(_kCntHPGS);
+
+!!eb
+
+!!bb LR HPGS (LR)
+! Сдвиг номеров элементов модели
+_lrOfstHPGS = _lrOfstL800+_numLrL800;
+! Число элементов модели общее
+_numLrHPGS = 3;
+! Элементы  модели
+_lrHPGS(1:_numLrHPGS) = 
+  1,
+  2,
+  3;
+! Число интегрируемых элементов модели
+_numLayLrHPGS = 3;
+! Интегрируемые элементы модели
+_lrLayHPGS(1:_numLayLrHPGS) = 1:3;
+
+!!eb
+
+!!bb VAL HPGS (VAL)
+! Сдвиг номеров элементов модели
+_valOfstHPGS = _valOfstL800+_numValL800;
+! Число элементов модели общее
+_numValHPGS = 3;
+! Элементы  модели
+_valHPGS(1:_numValHPGS) = 
+  1,
+  2,
+	3;
+! Число интегрируемых элементов модели
+_numLayValHPGS = 3;
+! Интегрируемые элементы модели
+_valLayHPGS(1:_numLayValHPGS) = 1:3;
+
+!!eb
+
+!!bb SLVES HPGS (SLV)
+! Сдвиг номеров элементов модели
+_slvOfstHPGS = _slvOfstL800+_numSlvL800;
+! Число элементов модели общее
+_numSlvHPGS = 1;
+! Элементы  модели
+_slvHPGS(1:_numSlvHPGS) =
+  1;
+! Число интегрируемых элементов модели
+_numLaySlvHPGS = 1;
+! Интегрируемые элементы модели
+_slvLayHPGS(1:_numLaySlvHPGS) = 1:1;
+
+!!eb
+
+!!bb HCS HPGS (HCS)
+! Сдвиг номеров элементов модели
+_hcsOfstHPGS = _hcsOfstL800+_numHcsL800;
+! Число элементов модели общее
+_numHcsHPGS = 1;
+! Элементы  модели
+_hcsHPGS(1:_numHcsHPGS) = 1:1;
+! Число интегрируемых элементов модели
+_numLayHcsHPGS = 1;
+! Интегрируемые элементы модели
+_hcsLayHPGS(1:_numLayHcsHPGS) = 1:1;
+! ===== Размерные ключи
+_nHcsHPGS(1:_numHcsHPGS) = 2;
+
+_nHcsHPGS(1) = 2;		! стенки баллонов ресивера
+
+_nMaxHcsHPGS = MAXA(_nHcsHPGS);
+
+!!eb
+
+!!bb Датчики HPGS
+
+_hpgs_sens_CH1(1:150) = 0.;
+_hpgs_sens_CH2(1:150) = 0.;
+_hpgs_sens_SLV1(1:150) = 0.;
+_hpgs_sens_VALS(1:150) = 0.;
+_hpgs_sens_VALCSI(1:150) = 0.;
+!!eb
+
+!!eb
+
+!!bb Печать состава расчетной модели
+PRINT '=== Model contains: ';
+PRINT '- Submodel L800';
+PRINT '=== END ';
+
+!!eb
+
+MAIN:
+
+LAYOUT
+! Структура моделей
+!!bb Lay L800
+
+! ~~~~~~~~~~~~~~~ СВД
+CH(1+_chOfstL800)/i - BLJUN(1);
+CH(1+_chOfstL800)/o - BLJUN(1);
+CH(1+_chOfstL800)(1) - CH(2+_chOfstL800)/i;
+CH(1+_chOfstL800)(12) - CH(2+_chOfstL800)/o;
+CH(1+_chOfstL800)(2:11) - JN(1+_jnOfstL800:10+_jnOfstL800)/i;
+CH(2+_chOfstL800)(2:11) - JN(1+_jnOfstL800:10+_jnOfstL800)/o;
+
+! крышка СВД
+HCS(5+_hcsOfstL800)(1:2)/1 - CH(1+_chOfstL800)(12:12);
+HCS(5+_hcsOfstL800)(1:2)/1 - CH(2+_chOfstL800)(12:12);
+HCS(5+_hcsOfstL800)(1:2)/2 - BHEAT(1);
+
+! днище+стенки СВД
+HCS(1+_hcsOfstL800)(1:11)/1 - CH(1+_chOfstL800)(1:11);
+HCS(1+_hcsOfstL800)(1:11)/1 - CH(2+_chOfstL800)(1:11);
+HCS(1+_hcsOfstL800)(1:11)/2 - BHEAT(1);
+
+! нагреватели
+HCS(4+_hcsOfstL800)(1:5)/2 - CH(1+_chOfstL800)(8:12);
+HCS(4+_hcsOfstL800)(1:5)/2 - CH(2+_chOfstL800)(8:12);
+HCS(4+_hcsOfstL800)(1:5)/1 - BHEAT(2);
+! ~~~~~~~~~~~~~~~
+
+! ~~~~~~~~~~~~~~~ подпитка - СВД
+CH(7+_chOfstL800)/i - BVOL_T(3+_bvOfstL800);
+CH(7+_chOfstL800)/o - CH(2+_chOfstL800)(12);
+CH(7+_chOfstL800)(1) - LR(9+_lrOfstL800);
+CH(7+_chOfstL800)(3) - VAL(6+_valOfstL800);
+! ~~~~~~~~~~~~~~~
+
+! ~~~~~~~~~~~~~~~ КД - трасса сброса
+CH(8+_chOfstL800)/i - SLVES(2+_slvOfstL800)/4;
+CH(8+_chOfstL800)/o - CH(3+_chOfstL800)(8);
+CH(8+_chOfstL800)(2) - LR(10+_lrOfstL800);
+CH(8+_chOfstL800)(3) - VAL(7+_valOfstL800);
+! ~~~~~~~~~~~~~~~
+
+! ~~~~~~~~~~~~~~~ КД
+HCS(2+_hcsOfstL800)(1:2)/1 - SLVES(2+_slvOfstL800);
+HCS(2+_hcsOfstL800)(1:2)/2 - BHEAT(1);
+! ~~~~~~~~~~~~~~~
+
+! ~~~~~~~~~~~~~~~ СВД - ББ (трасса LOCA)
+CH(3+_chOfstL800)/i - CH(1+_chOfstL800)(8); ! выход из СВД
+CH(3+_chOfstL800)(3) - LR(1+_lrOfstL800);
+CH(3+_chOfstL800)(4) - VAL(1+_valOfstL800);
+! ---- СУ 1
+CH(3+_chOfstL800)(6) - LR(2+_lrOfstL800);
+CH(3+_chOfstL800)(6) - JUNB(1+_jnbOfstL800);
+! ----
+CH(3+_chOfstL800)(7) - LR(3+_lrOfstL800);
+CH(3+_chOfstL800)(8) - VAL(2+_valOfstL800);
+CH(3+_chOfstL800)(9) - LR(4+_lrOfstL800);
+! ---- сброс (в ББ)
+CH(3+_chOfstL800)(10) - LR(5+_lrOfstL800);
+CH(3+_chOfstL800)/o - BVOL_T(1+_bvOfstL800);
+! ~~~~~~~~~~~~~~~ 
+
+! ~~~~~~~~~~~~~~~ СВД - КД
+CH(4+_chOfstL800)/i - CH(2+_chOfstL800)(1);
+CH(4+_chOfstL800)(2) - LR(6+_lrOfstL800);
+CH(4+_chOfstL800)(3) - VAL(4+_valOfstL800);
+CH(4+_chOfstL800)/o - SLVES(2+_slvOfstL800)/2;
+! ~~~~~~~~~~~~~~~
+
+! ~~~~~~~~~~~~~~~ КД - баллон N2
+CH(5+_chOfstL800)/i - SLVES(2+_slvOfstL800)/1;
+
+CH(5+_chOfstL800)(2) - LR(7+_lrOfstL800);
+CH(5+_chOfstL800)(3) - VAL(3+_valOfstL800);
+
+CH(5+_chOfstL800)/o - SLVES(1+_slvOfstL800)/1;
+! ~~~~~~~~~~~~~~~
+
+! ~~~~~~~~~~~~~~~ САВД - КД
+CH(6+_chOfstL800)/i - SLVES(2+_slvOfstL800)/3;
+
+CH(6+_chOfstL800)(2) - LR(8+_lrOfstL800);
+CH(6+_chOfstL800)(3) - VAL(5+_valOfstL800);
+
+CH(6+_chOfstL800)/o - BVOL_T(2+_bvOfstL800);
+! ~~~~~~~~~~~~~~~ 
+
+! ~~~~~~~~~~~~~~~баллон N2
+HCS(3+_hcsOfstL800)(1:2)/1 - SLVES(1+_slvOfstL800);
+HCS(3+_hcsOfstL800)(1:2)/2 - BHEAT(1);
+! ~~~~~~~~~~~~~~~
+
+!!eb
+
+!!bb Lay HPGS
+! ---- трасса ресивер-свд
+CH(1+_chOfstHPGS)/i - SLVES(1+_slvOfstHPGS)/1;
+CH(1+_chOfstHPGS)(2) - LR(1+_lrOfstHPGS);
+CH(1+_chOfstHPGS)(5) - LR(3+_lrOfstHPGS);
+! ---- подключение к СВД Л800
+CH(1+_chOfstHPGS)(6) - VAL(3+_valOfstHPGS);
+CH(1+_chOfstHPGS)/o - CH(2+_chOfstL800)(12);
+! ---- редуктор
+CH(1+_chOfstHPGS)(3) - VAL(1+_valOfstHPGS);
+CONT(1+_cntOfstHPGS) - VAL(1+_valOfstHPGS);
+! ---- трасса от компрессора
+CH(2+_chOfstHPGS)/i - SLVES(1+_slvOfstHPGS)/2;
+CH(2+_chOfstHPGS)(2) - LR(2+_lrOfstHPGS);
+CH(2+_chOfstHPGS)(3) - VAL(2+_valOfstHPGS);
+! ---- компрессор
+CH(2+_chOfstHPGS)(3) - SMASS_T(1+_smOfstHPGS);
+CH(2+_chOfstHPGS)/o - BLJUN1;
+! ---- ресивер
+HCS(1+_hcsOfstHPGS)(1:2)/1 - SLVES(1+_slvOfstHPGS);
+HCS(1+_hcsOfstHPGS)(1:2)/2 - BHEAT(1);
+
+!!eb
+
+
+END
+! Вызов процедур DATA моделей
+CALL _BlJun;
+CALL _Bh1;
+CALL _Bh2;
+!!bb CALLs L800
+CALL _ChL800;
+CALL _JnbL800;
+CALL _BvL800;
+CALL _LrL800;
+CALL _ValL800;
+CALL _HcsL800;
+CALL _SlvL800;
+CALL _JnL800;
+
+!!eb
+
+!!bb CALLs HPGS
+CALL _ChHPGS;
+CALL _SlvHPGS;
+CALL _CntHPGS;
+CALL _LrHPGS;
+CALL _ValHPGS;
+CALL _SmHPGS;
+CALL _HcsHPGS;
+
+!!eb
+
+!!bb Определение расчетных переменных на основе DATA
+
+!!eb
+
+!!bb SETs
+
+! L800
+SET _MonitorL800;
+SET _HeatingL800;
+
+! HPGS
+SET _MonitorHPGS;
+SET _CompHPGS;
+
+! SysL800
+!...
+
+! Общие
+SET _CalcSensor;
+SET _DtHandle;
+SET _Actions;
+SET _Exp;
+
+SET _Out1;
+
+
+SET _ReloadMonPer;  ! Должен быть после всех мониторов!!!
+
+!!eb
+
+!!bb OUTs
+OUT _Out;
+
+!!eb
+
+END
+
+DATA _BlJun   ! общая для всех объектов
+	MDL = 'BLJUN';
+	ELS = 1;
+	TYPE = 0;
+END
+DATA _Bh1     ! общая для всех объектов
+	MDL = 'BHEAT';
+	ELS = 1;
+	! Тип ГУ
+	TYPE = 3;
+	! Параметр 1 ГУ
+	BCOND(1) = 5.;
+	! Параметр 2 ГУ
+	BCOND(2) = 20.+_t0C;
+END
+DATA _Bh2     ! нагреватели
+	MDL = 'BHEAT';
+	ELS = 2;
+	! Тип ГУ
+	TYPE = 2;
+	! Параметр 1 ГУ
+	BCOND(1) = 0.;
+	! Параметр 2 ГУ
+	BCOND(2) = 0.;
+END
+!!bb DATAs L800
+! Для общей инициализации одинаковых экземпляров модели
+  ! ELS = (_chLayL800+_chOfstL800),(_chLayL800+_chOfstL800);
+  ! IF(NV <= _chOfstL8002) THEN
+    ! _i = NV-_chOfstL800;
+  ! ENDIF
+  ! IF(NV > _chOfstL800) THEN
+    ! _i = NV-_chOfstL800;
+  ! ENDIF
+
+DATA _ChL800
+	MDL = 'CH';
+	ELS = _chLayL800+_chOfstL800;
+	!!bb СВД (бочка Л-800)
+	IF(NV==1+_chOfstL800) THEN
+		N = _nChL800(NV-_chOfstL800);
+		S = 
+		0.041046043,
+		0.15752923 ,
+		0.30758564 ,
+		0.456755807,
+		0.582597645,
+		0.712601385,
+		0.813012017,
+		0.907291958,
+		0.907291958,
+		0.907291958,
+		0.907291958,
+		0.907291958;
+	
+		TYPE  = 6;
+		PR = 
+		0.507838452,
+		0.994879562,
+		1.390186165,
+		1.694072423,
+		1.913261342,
+		2.115988316,
+		2.260156003,
+		2.387610417,
+		2.387610417,
+		2.387610417,
+		2.387610417,
+		2.387610417;
+	
+		DZ = 
+		0.0337,
+		0.0477,
+		0.054 ,
+		0.054 ,
+		0.069 ,
+		0.076 ,
+		0.143 ,
+		0.549 ,
+		0.549 ,
+		0.549 ,
+		0.549 ,
+		0.549 ;
+	
+		DH = 
+		0.0337,
+		0.0477,
+		0.054 ,
+		0.054 ,
+		0.069 ,
+		0.076 ,
+		0.143 ,
+		0.549 ,
+		0.549 ,
+		0.549 ,
+		0.549 ,
+		0.549 ;
+		ROU = 2.e-5;
+		P = _P0;
+		T(1,1:N) = _T0;
+		T(2,1:N) = WS1P1(2,'P',_P0,2);
+		VOID = 0.;
+		!XB = ;
+		!MBW = ;
+		!SRE(1:2) = ;
+		!NE = ;
+		!JIN = ;
+		!JOU = ;
+		
+		!XNG(1,1:N) = ;
+		!XNG(2,1:N) = ;
+		!XNG(3,1:N) = ;
+		!XNG(4,1:N) = ;
+		!XNF(1,1:N) = ;
+		!XNF(2,1:N) = ;
+		!XNF(3,1:N) = ;
+		!XNF(4,1:N) = ;
+	ENDIF
+	IF(NV==2+_chOfstL800) THEN
+		N = _nChL800(NV-_chOfstL800);
+		S = 
+		0.041046043,
+		0.15752923 ,
+		0.30758564 ,
+		0.456755807,
+		0.582597645,
+		0.712601385,
+		0.813012017,
+		0.907291958,
+		0.907291958,
+		0.907291958,
+		0.907291958,
+		0.907291958;
+	
+		TYPE  = 6;
+		PR = 
+		0.507838452,
+		0.994879562,
+		1.390186165,
+		1.694072423,
+		1.913261342,
+		2.115988316,
+		2.260156003,
+		2.387610417,
+		2.387610417,
+		2.387610417,
+		2.387610417,
+		2.387610417;
+	
+		DZ = 
+		0.0337,
+		0.0477,
+		0.054 ,
+		0.054 ,
+		0.069 ,
+		0.076 ,
+		0.143 ,
+		0.549 ,
+		0.549 ,
+		0.549 ,
+		0.549 ,
+		0.549 ;
+	
+		DH = 
+		0.0337,
+		0.0477,
+		0.054 ,
+		0.054 ,
+		0.069 ,
+		0.076 ,
+		0.143 ,
+		0.549 ,
+		0.549 ,
+		0.549 ,
+		0.549 ,
+		0.549 ;
+		ROU = 2.e-5;
+		P = _P0;
+		T(1,1:N) = _T0;
+		T(2,1:N) = WS1P1(2,'P',_P0,2);
+		VOID = 0.;
+		!XB = ;
+		!MBW = ;
+		!SRE(1:2) = ;
+		!NE = ;
+		JIN = 0;
+		JOU = 1;
+		
+		!XNG(1,1:N) = ;
+		!XNG(2,1:N) = ;
+		!XNG(3,1:N) = ;
+		!XNG(4,1:N) = ;
+		!XNF(1,1:N) = ;
+		!XNF(2,1:N) = ;
+		!XNF(3,1:N) = ;
+		!XNF(4,1:N) = ;
+	ENDIF
+	!!eb
+	IF(NV==3+_chOfstL800) THEN ! трасса СВД - ББ (LOCA)
+		N = _nChL800(NV-_chOfstL800);
+		
+		S(1:6) = _pi*0.075**2;
+		S(7:N) = _pi*0.185**2;
+	
+		TYPE  = 0;
+		
+		PR(1:6) = 2.0*_pi*0.075;
+		PR(7:N) = 2.0*_pi*0.185;
+	
+		DZ = 
+		2.55,
+		4.66,
+		0.78,
+		0.78,
+		0.78,
+		0.78,
+		5.14,
+		2.82,
+		2.82,
+		2.82;
+	
+		DH = 
+		2.55 ,
+		4.66 ,
+		0.00 ,
+		0.00 ,
+		0.00 ,
+		0.00 ,
+		0.00 ,
+		-2.82,
+		-2.82,
+		-2.82;
+	
+	
+		ROU = 2.e-5;
+		P(1:7) = _P0;
+		T(1,1:7) = _T0;
+		T(2,1:7) = WS1P1(2,'P',_P0,2);
+		VOID(1:7) = 0.;
+		
+		P(8:N) = 1.*_atm;
+		T(1,8:N) = WS1P1(1,'P',1.*_atm,2);
+		T(2,8:N) = 20.+_t0C;
+		VOID(8:N) = 1.;
+		!XB = ;
+		!MBW = ;
+		!SRE(1:2) = ;
+		!NE = ;
+		JIN = 0;
+		!JOU = ;
+		
+		XNG(1,8:N) = _xgAir(1);
+		XNG(2,8:N) = _xgAir(2);
+		XNG(3,8:N) = _xgAir(3);
+		XNG(4,8:N) = _xgAir(4);
+		
+		!XNG(1,1:N) = ;
+		!XNG(2,1:N) = ;
+		!XNG(3,1:N) = ;
+		!XNG(4,1:N) = ;
+		!XNF(1,1:N) = ;
+		!XNF(2,1:N) = ;
+		!XNF(3,1:N) = ;
+		!XNF(4,1:N) = ;
+	ENDIF
+	IF(NV==4+_chOfstL800) THEN ! трасса КД-СВД
+		N = _nChL800(NV-_chOfstL800);
+		
+		S = _pi*0.0325**2;
+	
+		TYPE  = 0;
+	
+		PR = 2.0*_pi*0.0325;
+	
+		DZ = 
+		1.5854,
+		1.5854,
+		1.5854,
+		1.5854;
+	
+	
+		DH = 
+			0.,
+			0.,	  
+			0.,
+			0.;
+	
+		ROU = 2.e-5;
+	
+		P(1:N) = _P0;
+		T(1,1:N) = _T0;
+		T(2,1:N) = WS1P1(2,'P',_P0,2);
+		VOID(1:N) = 0.;
+	
+		!XB = ;
+		!MBW = ;
+		!SRE(1:2) = ;
+		!NE = ;
+		JIN = 0;
+		JOU = 0;
+		
+		!XNG(1,1:N) = ;
+		!XNG(2,1:N) = ;
+		! XNG(3,1:N) = _xng_n2_0;
+		XNG(3,1:N) = 1.;
+		!XNG(4,1:N) = ;
+		!XNF(1,1:N) = ;
+		!XNF(2,1:N) = ;
+		!XNF(3,1:N) = ;
+		!XNF(4,1:N) = ;
+	ENDIF
+	IF(NV==5+_chOfstL800) THEN ! трасса КД-N2
+		N = _nChL800(NV-_chOfstL800);
+		
+		S = _pi*0.01**2;
+	
+		TYPE  = 0;
+	
+		PR = 2.0*_pi*0.01;
+	
+		DZ = 
+		2.,
+		2.,
+		2.;
+	
+		DH = 0;
+	
+		ROU = 2.e-5;
+	
+		P(1:2) = _P0;
+		P(3:N) = _P_start;
+	
+		T(1,1:2) = _T0;
+		T(1,3:N) = _T_start;
+	
+		T(2,1:2) = _T0;
+		T(2,3:N) = _T_start;
+	
+		VOID = 1.;
+		!XB = ;
+		!MBW = ;
+		!SRE(1:2) = ;
+		!NE = ;
+		!JIN = 0;
+		!JOU = 0;
+		
+		!XNG(1,1:N) = ;
+		!XNG(2,1:N) = ;
+		! XNG(3,1:2) = _xng_n2_0;
+		XNG(3,1:N) = 1.;
+		!XNG(4,1:N) = ;
+		!XNF(1,1:N) = ;
+		!XNF(2,1:N) = ;
+		!XNF(3,1:N) = ;
+		!XNF(4,1:N) = ;
+	ENDIF
+	IF(NV==6+_chOfstL800) THEN ! трасса САВД-КД
+		N = _nChL800(NV-_chOfstL800);
+		
+		S = _pi*0.01**2;
+	
+		TYPE  = 0;
+	
+		PR = 2.0*_pi*0.01;
+	
+		DZ = 
+		2.,
+		2.,
+		2.;
+	
+		DH = 0;
+	
+		ROU = 2.e-5;
+	
+		P(1:2) = _P0;
+		T(1,1:2) = _T0;
+		T(2,1:2) = _T0;
+		VOID(1:2) = 1.;
+		
+		P(3:N) = _P0_comp_n2;	
+		T(1,3:N) = _T0_comp_n2;	
+		T(2,3:N) = _T0_comp_n2;
+		VOID(3:N) = 1.;
+	
+		!XB = ;
+		!MBW = ;
+		!SRE(1:2) = ;
+		!NE = ;
+		!JIN = 0;
+		!JOU = 0;
+		
+		!XNG(1,1:N) = ;
+		!XNG(2,1:N) = ;
+		! XNG(3,1:2) = _xng_n2_0;
+		XNG(3,1:N) = 1.;
+		!XNG(4,1:N) = ;
+		!XNF(1,1:N) = ;
+		!XNF(2,1:N) = ;
+		!XNF(3,1:N) = ;
+		!XNF(4,1:N) = ;
+	ENDIF
+	IF(NV==7+_chOfstL800) THEN ! трасса подпитки
+		N = _nChL800(NV-_chOfstL800);
+		
+		S = _pi*0.025**2;
+	
+		TYPE  = 0;
+	
+		PR = 2.0*_pi*0.025;
+	
+		DZ = 
+			2.,
+			2.,
+			2.;
+	
+		DH = 0;
+	
+		ROU = 2.e-5;
+		
+		P(1:2) = _Ptar+0.5*_atm;
+		T(1,1:2) = _Ttar;
+		T(2,1:2) = WS1P1(2,'P',_Ptar+0.5*_atm,2);
+		
+		P(3:N) = _P0;
+		T(1,3:N) = _T0;
+		T(2,3:N) = WS1P1(2,'P',_P0,2);
+		
+		VOID = 0.;
+	
+		!XB = ;
+		!MBW = ;
+		!SRE(1:2) = ;
+		!NE = ;
+		!JIN = 0;
+		JOU = 1;
+		
+		!XNG(1,1:N) = ;
+		!XNG(2,1:N) = ;
+		! XNG(3,1:2) = _xng_n2_0;
+		! XNG(3,3:N) = 1.;
+		!XNG(4,1:N) = ;
+		!XNF(1,1:N) = ;
+		!XNF(2,1:N) = ;
+		!XNF(3,1:N) = ;
+		!XNF(4,1:N) = ;
+	ENDIF
+	IF(NV==8+_chOfstL800) THEN ! КД - трасса сброса
+		N = _nChL800(NV-_chOfstL800);
+		
+		S = _pi*0.0125**2;
+	
+		TYPE  = 0;
+	
+		PR = 2.0*_pi*0.0125;
+	
+		DZ = 
+			2.562466667,
+			2.562466667,
+			2.562466667;
+	
+		DH = 
+			2.562466667,
+			2.562466667,
+			2.562466667;
+	
+		ROU = 2.e-5;	
+		
+		P(1:2) = _P0_comp_n2;	
+		T(1,1:2) = _T0_comp_n2;	
+		T(2,1:2) = _T0_comp_n2;
+		
+		P(3:N) = 1.*_atm;
+		T(1,3:N) = WS1P1(1,'P',1.*_atm,2);
+		T(2,3:N) = 20.+_t0C;
+		
+		VOID(1:N) = 1.;
+	
+		!XB = ;
+		!MBW = ;
+		!SRE(1:2) = ;
+		!NE = ;
+		!JIN = 0;
+		JOU = 1;
+		
+		!XNG(1,1:N) = ;
+		!XNG(2,1:N) = ;
+		! XNG(3,1:2) = _xng_n2_0;
+		XNG(3,1:2) = 1.;
+		
+		XNG(1,3:N) = _xgAir(1);
+		XNG(2,3:N) = _xgAir(2);
+		XNG(3,3:N) = _xgAir(3);
+		XNG(4,3:N) = _xgAir(4);
+		
+		!XNG(4,1:N) = ;
+		!XNF(1,1:N) = ;
+		!XNF(2,1:N) = ;
+		!XNF(3,1:N) = ;
+		!XNF(4,1:N) = ;
+	ENDIF
+END
+
+DATA _ScL800
+  MDL = 'SCH';
+  ELS = _scLayL800+_scOfstL800;
+  IF(NV==1+_scOfstL800) THEN
+	S = 5.34;
+	
+	TYPE = 0;
+	
+	DZ = 1.e-5;
+	
+	DH = 1.e-5;
+	
+	SMIN = S;
+	
+	MU = 1.;
+  ENDIF
+ 
+END
+
+DATA _JnbL800
+	MDL = 'JUNB';
+	ELS = _jnbLayL800+_jnbOfstL800;
+	! СУ 1
+	IF(NV==1+_jnbOfstL800) THEN
+		S = _pi*0.01**2;
+		! 
+		DZ = 0.02;
+		! 
+		DH = 0.0;
+		! 
+		SMIN = S;
+		! 
+		MU = 0.82;
+		! 
+		TYPE = 1;
+	ENDIF
+END
+
+DATA _CntL800
+	MDL = 'CONT';
+	ELS = _cntLayL800+_cntOfstL800;
+	_i = NV - _cntOfstL800;
+	N = _nCntL800(_i);
+	K = _kCntL800(_i);
+	Y = _yCntL800(_i,1:_nMaxCntL800);
+	YZ = _yzCntL800(_i,1:_nMaxCntL800);
+	VZX(1:_kCntL800(_i),1) = _vzx1CntL800(_i,1:_kCntL800(_i));
+	VZX(1:_kCntL800(_i),2) = _vzx2CntL800(_i,1:_kCntL800(_i));
+	ON = _onCntL800(_i);
+	DS = _dsCntL800(_i);
+	TSX = _tsxCntL800(_i);
+	KP = _kpCntL800(_i,1:_nCntL800(_i));
+	KI = _kiCntL800(_i,1:_nCntL800(_i));
+	KD = _kdCntL800(_i,1:_nCntL800(_i));
+	DO _k=1,_nCntL800(_i);
+		IF(_ly1CntL800(_i,_k)<>0.) THEN
+			LY(1,_k) = _ly1CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_ly2CntL800(_i,_k)<>0.) THEN
+			LY(2,_k) = _ly2CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_lyz1CntL800(_i,_k)<>0.) THEN
+			LYZ(1,_k) = _lyz1CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_lyz2CntL800(_i,_k)<>0.) THEN
+			LYZ(2,_k) = _lyz2CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_ldy1CntL800(_i,_k)<>0.) THEN
+			LDY(1,_k) = _ldy1CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_ldy2CntL800(_i,_k)<>0.) THEN
+			LDY(2,_k) = _ldy2CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_lxp1CntL800(_i,_k)<>0.) THEN
+			LXP(1,_k) = _lxp1CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_lxp2CntL800(_i,_k)<>0.) THEN
+			LXP(2,_k) = _lxp2CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_lxi1CntL800(_i,_k)<>0.) THEN
+			LXI(1,_k) = _lxi1CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_lxi2CntL800(_i,_k)<>0.) THEN
+			LXI(2,_k) = _lxi2CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_lxd1CntL800(_i,_k)<>0.) THEN
+			LXD(1,_k) = _lxd1CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_lxd2CntL800(_i,_k)<>0.) THEN
+			LXD(2,_k) = _lxd2CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_lxj1CntL800(_i,_k)<>0.) THEN
+			LXJ(1,_k) = _lxj1CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_lxj2CntL800(_i,_k)<>0.) THEN
+			LXJ(2,_k) = _lxj2CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_lsx1CntL800(_i,_k)<>0.) THEN
+			LSX(1,_k) = _lsx1CntL800(_i,_k);
+		ENDIF
+	ENDDO
+	DO _k=1,_nCntL800(_i);
+		IF(_lsx2CntL800(_i,_k)<>0.) THEN
+			LSX(2,_k) = _lsx2CntL800(_i,_k);
+		ENDIF
+	ENDDO
+
+END
+
+DATA _BvL800
+	MDL = 'BVOL_T';
+	ELS = _bvLayL800+_bvOfstL800;
+	IF(NV==1+_bvOfstL800) THEN
+		P = 1.*_atm;
+		VOID = 1.;
+		T = WS1P1(1,'P',P,2), 293.15;
+		!XB = ;
+		XNG(1) = _xgAir(1);
+		XNG(2) = _xgAir(2);
+		XNG(3) = _xgAir(3);
+		XNG(4) = _xgAir(4);
+		!XNF = ;
+	ENDIF
+	IF(NV==2+_bvOfstL800) THEN
+		P = _P0_comp_n2;
+		VOID = 1.;
+		T = WS1P1(1,'P',P,2), _T0_comp_n2;
+		!XB = ;
+		XNG(1) = 0.;
+		XNG(2) = 0.;
+		XNG(3) = 1.;
+		XNG(4) = 0.;
+		!XNF = ;
+	ENDIF
+	IF(NV==3+_bvOfstL800) THEN
+		P = _Ptar+0.5*_atm;
+		VOID = 0.;
+		T = _Ttar, WS1P1(1,'P',P,2);
+		!XB = ;
+		XNG(1) = 0.;
+		XNG(2) = 0.;
+		XNG(3) = 0.;
+		XNG(4) = 0.;
+		!XNF = ;
+	ENDIF
+
+END
+
+DATA _SmL800
+	MDL = 'SMASS_T';
+	ELS = _smLayL800+_smOfstL800;
+	! забор жидкости из сепаратора
+	IF(NV==1+_smOfstL800) THEN
+		GIN = 0.,0.;
+		EHIN = WS2P1(1,'PT',1.*_atm,293.15,4), WS2P1(2,'PT',1.*_atm,293.15,4);
+		GMOUT = 0.;
+		!XB = ;
+		!XNG = ;
+		!XNF = ;
+	ENDIF
+	! поступление сепарата в барботажный бак
+	IF(NV==2+_smOfstL800) THEN
+		GIN = 0.,0.;
+		EHIN = WS2P1(1,'PT',1.*_atm,293.15,4), WS2P1(2,'PT',1.*_atm,293.15,4);
+		GMOUT = 0.;
+		!XB = ;
+		!XNG = ;
+		!XNF = ;
+	ENDIF
+END
+
+DATA _LrL800
+	MDL = 'LR';
+	ELS = _lrLayL800+_lrOfstL800;
+	IF(NV==1+_lrOfstL800) THEN ! колено ны выходе из СВД
+		CSI1 = 0.066;
+		CSI2 = 0.066;
+		!DHOLE = ;
+		!SHOLE = ;
+	ENDIF
+	IF(NV==2+_lrOfstL800) THEN ! СУ 1
+		CSI1 = 2.5;
+		CSI2 = 2.5;
+		!DHOLE = ;
+		!SHOLE = ;
+	ENDIF
+	IF(NV==3+_lrOfstL800) THEN ! конфузор за СУ 1
+		CSI1 = 0.037;
+		CSI2 = 0.037;
+		!DHOLE = ;
+		!SHOLE = ;
+	ENDIF
+	IF(NV==4+_lrOfstL800) THEN ! колена на трассе СУ 1 - МР1,2
+		CSI1 = 0.;
+		CSI2 = 0.;
+		!DHOLE = ;
+		!SHOLE = ;
+	ENDIF
+	IF(NV==5+_lrOfstL800) THEN ! колена на трассе МР1,2 - ББ
+		CSI1 = 0.1575*1.;
+		CSI2 = 0.1575*1.;
+		!DHOLE = ;
+		!SHOLE = ;
+	ENDIF
+	IF(NV==6+_lrOfstL800) THEN ! колена на трассе КД - СВД
+		CSI1 = 0.069*7 + 1.2*0.069;
+		CSI2 = 0.069*7 + 1.2*0.069;
+		!DHOLE = ;
+		!SHOLE = ;
+	ENDIF
+	IF(NV==7+_lrOfstL800) THEN ! колена на трассе КД - баллон N2
+		CSI1 = 0.092*4;
+		CSI2 = 0.092*4;
+		!DHOLE = ;
+		!SHOLE = ;
+	ENDIF
+	IF(NV==8+_lrOfstL800) THEN
+		CSI1 = 0.092*4;
+		CSI2 = 0.092*4;
+		!DHOLE = ;
+		!SHOLE = ;
+	ENDIF
+	IF(NV==9+_lrOfstL800) THEN
+		CSI1 = 0.092*4;
+		CSI2 = 0.092*4;
+		!DHOLE = ;
+		!SHOLE = ;
+	ENDIF
+	IF(NV==10+_lrOfstL800) THEN
+		CSI1 = 0.092*4;
+		CSI2 = 0.092*4;
+		!DHOLE = ;
+		!SHOLE = ;
+	ENDIF
+	
+	
+	
+END
+
+DATA _ValL800
+	MDL = 'VAL';
+	ELS = _valLayL800+_valOfstL800;
+	IF(NV==1+_valOfstL800) THEN
+		K = 2;
+		F(1:K,1) = 0., 1.;
+		F(1:K,2) = 0., 1.;
+		F(1:K,3) = 0., 1.;
+		CSI1 = 0.05;
+		CSI2 = 0.05;
+		S = 1.;
+		LS(1) = 0.;
+		LS(2) = 1.;
+	ENDIF
+	IF(NV==2+_valOfstL800) THEN
+		K = 2;
+		F(1:K,1) = 0., 1.;
+		F(1:K,2) = 0., 1.;
+		F(1:K,3) = 0., 1.;
+		CSI1 = 5.;
+		CSI2 = 5.;
+		S = 0.;
+		LS(1) = 0.;
+		LS(2) = 1.;
+	ENDIF
+	IF(NV==3+_valOfstL800) THEN
+		K = 2;
+		F(1:K,1) = 0., 1.;
+		F(1:K,2) = 0., 1.;
+		F(1:K,3) = 0., 1.;
+		CSI1 = 2.;
+		CSI2 = 2.;
+		S = 0.;
+		LS(1) = 0.;
+		LS(2) = 1.;
+	ENDIF
+	IF(NV==4+_valOfstL800) THEN
+		K = 2;
+		F(1:K,1) = 0., 1.;
+		F(1:K,2) = 0., 1.;
+		F(1:K,3) = 0., 1.;
+		CSI1 = 2.;
+		CSI2 = 2.;
+		S = 1.;
+		LS(1) = 0.;
+		LS(2) = 1.;
+	ENDIF
+	IF(NV==5+_valOfstL800) THEN
+		K = 2;
+		F(1:K,1) = 0., 1.;
+		F(1:K,2) = 0., 1.;
+		F(1:K,3) = 0., 1.;
+		CSI1 = 2.;
+		CSI2 = 2.;
+		S = 0.;
+		LS(1) = 0.;
+		LS(2) = 1.;
+	ENDIF
+	IF(NV==6+_valOfstL800) THEN
+		K = 2;
+		F(1:K,1) = 0., 1.;
+		F(1:K,2) = 0., 1.;
+		F(1:K,3) = 0., 1.;
+		CSI1 = 2.;
+		CSI2 = 2.;
+		S = 0.;
+		LS(1) = 0.;
+		LS(2) = 1.;
+	ENDIF
+	IF(NV==7+_valOfstL800) THEN
+		K = 2;
+		F(1:K,1) = 0., 1.;
+		F(1:K,2) = 0., 1.;
+		F(1:K,3) = 0., 1.;
+		CSI1 = 2.;
+		CSI2 = 2.;
+		S = 0.;
+		LS(1) = 0.;
+		LS(2) = 1.;
+	ENDIF
+
+END
+
+DATA _SlvL800
+	MDL = 'SLVES';
+	ELS = _slvLayL800+_slvOfstL800;
+	IF(NV==1+_slvOfstL800) THEN ! компенсирующая группа газовых баллонов
+	! Число сечений аппроксимации объема
+	NH = 1;
+	! Высоты подключения каналов
+	HP = 2.;
+	! Высоты сечений 
+	H = 2.;
+	! Объемы под высотами сечений
+	V = _dV_start;
+	! Нижние отметки ячеек ТК тр. пучка
+	!HD = ;
+	! Верхние отметки ячеек ТК тр. пучка
+	!HU = ;
+	! Экв диаметр тр пучка по наружке
+	!D = ;
+	! Давление над уровнем
+	P = _P_n2_comp;
+	! Высота физ. уровня 
+	HL = 1.e-2;
+	! Температуры сред
+	! T(1) = WS1P1(1,'P',P,2);
+	T(1) = _T_n2_comp;
+	T(2) = _T_n2_comp;
+	! Конц-я борной к-ты в воде
+	!XB = ;
+	! Масса бора на стенках
+	!MBW  = ;
+	! К увелич. скорости всплытия пузыря
+	!C = ;
+	! Коэффициент захвата ПГС
+	!KZ = ;
+	! Концентрация газов в газ фазе
+	XNG(3) = 1.;
+	! Концентрация газов в вод фазе
+	XNF = 0.;
+	ENDIF
+	IF(NV==2+_slvOfstL800) THEN ! КД
+		! Число сечений аппроксимации объема
+		NH = 15;
+		! Высоты подключения каналов
+		HP = 6.02, 0.022, 6.02, 0.022;
+		! Высоты сечений 
+		H = 
+			0.150962308,
+			0.191218923,
+			0.241539692,
+			0.302454307,
+			0.393296538,
+			1.438296538,
+			2.483296538,
+			3.528296538,
+			4.573296538,
+			5.618296538,
+			5.749395384,
+			5.850301769,
+			5.930815   ,
+			5.981135769,
+			6.021392384;
+	
+	
+		! Объемы под высотами сечений
+		V = 
+			0.024990763,
+			0.033971777,
+			0.046796891,
+			0.065640243,
+			0.096849173,
+			0.499012303,
+			0.901175432,
+			1.303338562,
+			1.705501692,
+			2.107664821,
+			2.152703948,
+			2.180194804,
+			2.194638808,
+			2.199453559,
+			2.200753387;
+	
+	
+		! Нижние отметки ячеек ТК тр. пучка
+		! HD = ;
+		! Верхние отметки ячеек ТК тр. пучка
+		! HU = ;
+		! Экв диаметр тр пучка по наружке
+		! D = ;
+		! Давление над уровнем
+		P = _P0;
+		! Высота физ. уровня 
+		HL = 0.5;
+		! Температуры сред
+		T(1) = _T0;
+		T(2) = _T0;
+		! Конц-я борной к-ты в воде
+		!XB = ;
+		! Масса бора на стенках
+		!MBW  = ;
+		! К увелич. скорости всплытия пузыря
+		!C = ;
+		! Коэффициент захвата ПГС
+		!KZ = ;
+		! Концентрация газов в газ фазе
+		XNG(3) = _xng_n2_0;
+		! Концентрация газов в вод фазе
+		XNF = 0.;
+	ENDIF
+END
+
+DATA _JnL800
+	MDL = 'JN';
+	ELS = _jnLayL800+_jnOfstL800;
+	_i = NV - _jnOfstL800;  
+	S = _sJnL800(_i);
+	DZ = _dzJnL800(_i);
+	DH = _dhJnL800(_i);
+	SMIN = _sminJnL800(_i);
+	MU = _muJnL800(_i);
+	TYPE = _typeJnL800(_i);
+	JIN = _jinJnL800(_i);
+	JOU = _jouJnL800(_i);
+	DXDZ = _dxdzJnL800(_i,1:2);
+	CSI1 = _csiJnL800(_i,1);
+	CSI2 = _csiJnL800(_i,2);
+END
+
+DATA _HcsL800
+	MDL = 'HCS';
+	ELS = _hcsLayL800+_hcsOfstL800;
+	
+	IF(NV==1+_hcsOfstL800) THEN ! днище+стенка СВД (с теплоизоляцией)
+		N = _nHcsL800(NV-_hcsOfstL800);
+			
+		KL = 2;
+			
+		K  = 10;
+			
+		TYPE = 0;
+			
+		! NSD = ;
+			
+		COOR = 1;
+			
+		XL = 
+			0.76,
+			0.87,
+			0.97;
+			
+		XL = 
+			0.76,
+			0.87,
+			0.97;
+			
+		X = 
+			0.7600,
+			0.7875,
+			0.8150,
+			0.8425,
+			0.8700,
+			0.8710,
+			0.8950,
+			0.9200,
+			0.9450,
+			0.9700;
+			
+		TLAM(1) = $_tlam08X18H10T;
+		THC(1) = $_thc08X18H10T;
+		TRO(1) = $_tro08X18H10T;
+		
+		TLAM(2) = $_tlamIzol;
+		THC(2) = $_thcIzol;
+		TRO(2) = $_troIzol;
+			
+		! QX = ;
+			
+		DFZ = 
+			0.040186623,
+			0.066824135,
+			0.065818946,
+			0.065400117,
+			0.088268169,
+			0.083053751,
+			0.143  ,
+			0.549  ,
+			0.549  ,
+			0.549  ,
+			0.549  ;
+			
+		! QZ = ;
+			
+		! EM = 0.99,0.989;
+			
+		B = 1.;
+			
+		NGE = 10;
+			
+		! SD = ;
+			
+		! LQ = ;
+			
+		! ZLR = ;
+			
+		! CLR = ;
+			
+		! FORMF = ;
+			
+		! REFLOOD = ;
+			
+		PF1 = 0.5;
+			
+		! PF2 = ;
+			
+		! NALF = ;
+			
+		KIND = 6;
+			
+		! PAR = ;
+			
+		! ALM = ;
+	ENDIF
+	IF(NV==2+_hcsOfstL800) THEN ! стенки КД1
+		N = _nHcsL800(NV-_hcsOfstL800);
+			
+		KL = 1;
+			
+		K  = 5;
+			
+		TYPE = 0;
+			
+		! NSD = ;
+			
+		COOR = 1;
+			
+		XL = 
+			0.35,
+			0.41;
+			
+		X = 
+			0.350,
+			0.365,
+			0.380,
+			0.395,
+			0.410;
+			
+		TLAM = $_tlam08X18H10T;
+			
+		THC = $_thc08X18H10T;
+			
+		TRO = $_tro08X18H10T;
+			
+		! QX = ;
+			
+		DFZ = 
+			0.5,
+			5.5214;
+	
+			
+		! QZ = ;
+			
+		! EM = 0.99,0.99;
+			
+		B = 1.;
+			
+		NGE = 10;
+			
+		! SD = ;
+			
+		! LQ = ;
+			
+		! ZLR = ;
+			
+		! CLR = ;
+			
+		! FORMF = ;
+			
+		! REFLOOD = ;
+			
+		PF1 = 1.;
+			
+		! PF2 = ;
+			
+		! NALF = ;
+			
+		KIND = 6;
+			
+		! PAR = ;
+			
+		! ALM = ;
+	ENDIF
+	IF(NV==3+_hcsOfstL800) THEN ! баллон N2
+		N = _nHcsL800(NV-_hcsOfstL800);
+			
+		KL = 1;
+			
+		K  = 5;
+			
+		TYPE = 0;
+			
+		! NSD = ;
+			
+		COOR = 1;
+			
+		XL = 
+			0.250,
+			0.256;
+			
+		X = 0.2500,
+			0.2515,
+			0.2530,
+			0.2545,
+			0.2560;
+			
+		TLAM = $_tlam08X18H10T;
+			
+		THC = $_thc08X18H10T;
+			
+		TRO = $_tro08X18H10T;
+			
+		! QX = ;
+			
+		DFZ = 
+			1.0,
+			1.0;
+			
+		! QZ = ;
+			
+		! EM = 0.99,0.99;
+			
+		B = 1.;
+			
+		NGE = 10;
+			
+		! SD = ;
+			
+		! LQ = ;
+			
+		! ZLR = ;
+			
+		! CLR = ;
+			
+		! FORMF = ;
+			
+		! REFLOOD = ;
+			
+		! PF1 = ;
+			
+		! PF2 = ;
+			
+		! NALF = ;
+			
+		KIND = 6;
+			
+		! PAR = ;
+			
+		! ALM = ;
+	ENDIF
+	IF(NV==4+_hcsOfstL800) THEN ! нагреватели
+		N = _nHcsL800(NV-_hcsOfstL800);
+			
+		KL = 1;
+			
+		K  = 6;
+			
+		TYPE = 0;
+			
+		! NSD = ;
+			
+		COOR = 1;
+			
+		XL = 
+			0.0125,
+			0.0155;
+			
+		X = 
+			0.0125,
+			0.0131,
+			0.0137,
+			0.0143,
+			0.0149,
+			0.0155;
+			
+		TLAM = $_tlam15H2MFA;
+			
+		THC = $_thc15H2MFA;
+			
+		TRO = $_tro15H2MFA;
+			
+		! QX = ;
+			
+		DFZ = 
+			0.51,
+			0.51,
+			0.51,
+			0.51,
+			0.51;
+			
+		! QZ = ;
+			
+		! EM = 0.99,0.99;
+			
+		B = 36.;
+			
+		NGE = 0;
+			
+		! SD = ;
+			
+		! LQ = ;
+			
+		! ZLR = ;
+			
+		! CLR = ;
+			
+		! FORMF = ;
+			
+		! REFLOOD = ;
+			
+		! PF1 = ;
+			
+		PF2 = 0.5;
+			
+		! NALF = ;
+			
+		! KIND = 6;
+			
+		! PAR = ;
+			
+		! ALM = ;
+	ENDIF
+	IF(NV==5+_hcsOfstL800) THEN ! крышка СВД (с теплоизоляцией)
+		N = _nHcsL800(NV-_hcsOfstL800);
+			
+		KL = 2;
+			
+		K  = 10;
+			
+		TYPE = 0;
+			
+		! NSD = ;
+			
+		COOR = 1;
+			
+		XL = 
+			0.76,
+			1.0625,
+			1.1625;
+			
+		X = 
+			0.7600,
+			0.7600+0.075625*1,
+			0.7600+0.075625*2,
+			0.7600+0.075625*3,
+			0.7600+0.075625*4,
+			0.7600+0.075625*4+0.001,
+			0.7600+0.075625*4+0.025*1,
+			0.7600+0.075625*4+0.025*2,
+			0.7600+0.075625*4+0.025*3,
+			0.7600+0.075625*4+0.025*4;
+			
+			
+		TLAM(1) = $_tlam08X18H10T;
+		THC(1) = $_thc08X18H10T;
+		TRO(1) = $_tro08X18H10T;
+			
+		! QX = ;
+			
+		DFZ = 
+			1.592721,
+			0.38;
+			
+		! QZ = ;
+			
+		! EM = 0.99,0.989;
+			
+		B = 1.;
+			
+		NGE = 10;
+			
+		! SD = ;
+			
+		! LQ = ;
+			
+		! ZLR = ;
+			
+		! CLR = ;
+			
+		! FORMF = ;
+			
+		! REFLOOD = ;
+			
+		PF1 = 0.5;
+			
+		! PF2 = ;
+			
+		! NALF = ;
+			
+		KIND = 6;
+			
+		! PAR = ;
+			
+		! ALM = ;
+	ENDIF
+END
+
+!!eb
+!!bb DATAs HPGS
+! Для общей инициализации одинаковых экземпляров модели
+  ! ELS = (_chLayHPGS+_chOfstHPGS),(_chLayHPGS+_chOfstHPGS2);
+  ! IF(NV <= _chOfstHPGS2) THEN
+    ! _i = NV-_chOfstHPGS;
+  ! ENDIF
+  ! IF(NV > _chOfstHPGS2) THEN
+    ! _i = NV-_chOfstHPGS2;
+  ! ENDIF
+
+DATA _ChHPGS
+  MDL = 'CH';
+  ELS = _chLayHPGS+_chOfstHPGS;
+  
+  IF(NV==1+_chOfstHPGS) THEN
+    N = _nChHPGS(NV-_chOfstHPGS);
+    
+    S(1:2) = _pi*0.016**2;
+    S(3:N) = 4*_pi*0.016**2;
+    
+    TYPE  = 0;
+    
+    PR = _pi*2*0.016;
+    
+    DZ(1:3) = 0.25;
+    DZ(4) = 30.;
+    DZ(5:N) = 0.25;
+    
+    DH = 0.;
+    
+    ROU = 2.e-5;
+    
+    P(1:2) = _P0_hpgs;
+    P(3:N) = _P0_hpgs;
+    
+    T(1,1:N) = _T0_hpgs;
+    
+    T(2,1:N) = _T0_hpgs;
+    
+    VOID = 1.;
+    
+    !XB = ;
+    !MBW = ;
+    !SRE(1:2) = ;
+    !NE = ;
+    ! JIN = ;
+    JOU = 1;
+    
+    XNG(1,1:N) = _xgAir(1);
+    XNG(2,1:N) = _xgAir(2);
+    XNG(3,1:N) = _xgAir(3);
+    XNG(4,1:N) = _xgAir(4);
+    !XNF(1,1:N) = ;
+    !XNF(2,1:N) = ;
+    !XNF(3,1:N) = ;
+    !XNF(4,1:N) = ;
+  ENDIF
+  IF(NV==2+_chOfstHPGS) THEN
+    N = _nChHPGS(NV-_chOfstHPGS);
+    
+    S = _pi*0.01**2;
+    
+    TYPE  = 0;
+    
+    PR = _pi*2*0.01;
+    
+    DZ = 0.2;
+    
+    DH = 0.;
+    
+    ROU = 2.e-5;
+    
+    P = _P0_hpgs;
+    
+    T(1,1:N) = _T0_hpgs;
+    
+    T(2,1:N) = _T0_hpgs;
+    
+    VOID = 1.;
+    
+    !XB = ;
+    !MBW = ;
+    !SRE(1:2) = ;
+    !NE = ;
+    ! JIN = ;
+    ! JOU = ;
+    
+    XNG(1,1:N) = _xgAir(1);
+    XNG(2,1:N) = _xgAir(2);
+    XNG(3,1:N) = _xgAir(3);
+    XNG(4,1:N) = _xgAir(4);
+    !XNF(1,1:N) = ;
+    !XNF(2,1:N) = ;
+    !XNF(3,1:N) = ;
+    !XNF(4,1:N) = ;
+  ENDIF
+END
+
+DATA _CntHPGS
+  MDL = 'CONT';
+  ELS = _cntLayHPGS+_cntOfstHPGS;
+  IF(NV==1+_cntOfstHPGS) THEN
+    N = 1;
+    K = 3;
+    _n = 1 + _chOfstHPGS;
+    Y = $P.CH(_n)(3);
+    YZ = _Ptar_hpgs;
+    VZX(1:K,1) = -1.e5, 0., 1.e5;
+    VZX(1:K,2) = -0.5, 0., 0.5;
+    ON = 0;
+    ! DS = ;
+    TSX = 0.;
+    
+    KP = 50.;
+    KI = 0.;
+    KD = 0.;
+    
+    ! KP = 0.6*3.;
+    ! KI = 2.*KP(1)/5.;
+    ! KD = KP(1)*5./8.;
+    
+    ! LY(1:2,1) = ;
+    ! LYZ(1:2,1) = ;
+    ! LDY(1:2,1) = ;
+    ! LXP(1:2,1) = ;
+    ! LXI(1:2,1) = ;
+    ! LXD(1:2,1) = ;
+    ! LXJ(1:2,1) = ;
+    ! LSX(1:2,1) = ;
+  ENDIF
+END
+
+DATA _SmHPGS
+  MDL = 'SMASS_T';
+  ELS = _smLayHPGS+_smOfstHPGS;
+  IF(NV==1+_smOfstHPGS) THEN ! приток от компрессора
+    GIN = 
+		0.,
+		0.;
+    _n = 2+_chOfstHPGS;
+    EHIN = 
+		WS2P1(1,'PT',P.CH(_n)(3),T.CH(_n)(2,3),4),
+		GM6P1('PTX',P.CH(_n)(3),T.CH(_n)(2,3),$_xgAir,2);
+    GMOUT = 0.;
+    !XB = ;
+    XNG(1) = _xgAir(1);
+    XNG(2) = _xgAir(2);
+    XNG(3) = _xgAir(3);
+    XNG(4) = _xgAir(4);
+  ENDIF
+END
+
+DATA _LrHPGS
+  MDL = 'LR';
+  ELS = _lrLayHPGS+_lrOfstHPGS;
+  IF(NV==1+_lrOfstHPGS) THEN
+    CSI1 = 1.;
+    CSI2 = 1.;
+    !DHOLE = ;
+    !SHOLE = ;
+  ENDIF
+  IF(NV==2+_lrOfstHPGS) THEN
+    CSI1 = 1.;
+    CSI2 = 1.;
+    !DHOLE = ;
+    !SHOLE = ;
+  ENDIF
+  IF(NV==3+_lrOfstHPGS) THEN
+    CSI1 = 1.;
+    CSI2 = 1.;
+    !DHOLE = ;
+    !SHOLE = ;
+  ENDIF
+END
+
+DATA _ValHPGS
+  MDL = 'VAL';
+  ELS = _valLayHPGS+_valOfstHPGS;
+  IF(NV==1+_valOfstHPGS) THEN
+    K = 2;
+    F(1:K,1) = 0., 1.;
+    F(1:K,2) = 0., 1.;
+    F(1:K,3) = 0., 1.;
+    CSI1 = 0.99;
+    CSI2 = 0.99;
+    S = 0.;
+    LS(1) = 0.;
+    LS(2) = 1.;
+  ENDIF
+  IF(NV==2+_valOfstHPGS) THEN
+    K = 2;
+    F(1:K,1) = 0., 1.;
+    F(1:K,2) = 0., 1.;
+    F(1:K,3) = 0., 1.;
+    CSI1 = 5.;
+    CSI2 = 5.;
+    S = 1.;
+    LS(1) = 0.;
+    LS(2) = 1.;
+  ENDIF
+	IF(NV==3+_valOfstHPGS) THEN
+    K = 2;
+    F(1:K,1) = 0., 1.;
+    F(1:K,2) = 0., 1.;
+    F(1:K,3) = 0., 1.;
+		CSI1 = 0.05;
+		CSI2 = 0.05;
+		S = 0.;
+    LS(1) = 0.;
+    LS(2) = 1.;
+  ENDIF
+END
+
+DATA _SlvHPGS
+  MDL = 'SLVES';
+  ELS = _slvLayHPGS+_slvOfstHPGS;
+  IF(NV==1+_slvOfstHPGS) THEN ! Газовый баллон
+		! Число сечений аппроксимации объема
+		NH = 1;
+		! Высоты подключения каналов
+		HP = 0.5, 3.24;
+		! Высоты сечений 
+		H = 3.24;
+		! Объемы под высотами сечений
+		V = 5.6;
+		! Нижние отметки ячеек ТК тр. пучка
+		!HD = ;
+		! Верхние отметки ячеек ТК тр. пучка
+		!HU = ;
+		! Экв диаметр тр пучка по наружке
+		!D = ;
+		! Давление над уровнем
+		P = _P0_hpgs;
+		! Высота физ. уровня 
+		HL = 1.e-12;
+		! Температуры сред
+		! T(1) = WS1P1(1,'P',P,2);
+		T(1) = _T0_hpgs;
+		T(2) = _T0_hpgs;
+		! Конц-я борной к-ты в воде
+		!XB = ;
+		! Масса бора на стенках
+		!MBW  = ;
+		! К увелич. скорости всплытия пузыря
+		!C = ;
+		! Коэффициент захвата ПГС
+		!KZ = ;
+		! Концентрация газов в газ фазе
+		XNG(1) = _xgAir(1);
+		XNG(2) = _xgAir(2);
+		XNG(3) = _xgAir(3);
+		XNG(4) = _xgAir(4);
+		! Концентрация газов в вод фазе
+		! XNF = 0.;
+  ENDIF
+END
+
+DATA _HcsHPGS
+  MDL = 'HCS';
+  ELS = _hcsLayHPGS+_hcsOfstHPGS;
+  IF(NV==1+_hcsOfstHPGS) THEN ! стенка ресивера
+    N = _nHcsHPGS(NV-_hcsOfstHPGS);
+      
+    KL = 1;
+      
+    K  = 5;
+      
+    TYPE = 0;
+      
+    ! NSD = ;
+      
+    COOR = 1;
+      
+    XL = 
+      0.2325,
+      0.2513;
+      
+    X = 
+      0.2325,
+	  0.2325+0.0047*1,
+	  0.2325+0.0047*2,
+	  0.2325+0.0047*3,
+	  0.2325+0.0047*4;
+      
+    TLAM = $_tlam42HNM;
+      
+    THC = $_thc42HNM;
+      
+    TRO = $_tro42HNM;
+      
+    ! QX = ;
+      
+    DFZ = 
+      1.62,
+      1.62;
+  
+      
+    ! QZ = ;
+      
+    ! EM = 0.99,0.99;
+      
+    B = 14.;
+      
+    NGE = 10;
+      
+    ! SD = ;
+      
+    ! LQ = ;
+      
+    ! ZLR = ;
+      
+    ! CLR = ;
+      
+    ! FORMF = ;
+      
+    ! REFLOOD = ;
+      
+    PF1 = 1.;
+      
+    ! PF2 = ;
+      
+    ! NALF = ;
+      
+    KIND = 6;
+      
+    ! PAR = ;
+      
+    ! ALM = ;
+  ENDIF
+END
+
+!!eb
+
+!!bb EVENTs L800
+EVENT _MonitorL800
+	type = ALW;                  
+	replace = 1;
+	turn_on = 1;
+	! Диагностика геометрии
+	IF first THEN 
+		first = 0;
+		_timeMon = 0.;
+		_timeMonOld = 0.;
+		PRINT '=== MODEL L800 GEOMETRY DIAGNOSTICS ===';
+		PRINT '*** CH DATA L800 ***';
+		DO _i=1,_numLayChL800;
+			_m = _chLayL800(_i)+_chOfstL800;
+			_n = _chLayL800(_i);
+			PRINT '- CH',_m,' in model L800',_n;
+			! Геометрия каналов
+			_dzFullChL800 = 0.;
+			_dhFullChL800 = 0.;
+			_vFullChL800 = 0.;
+			PRINT 'Cl','----- DZ ------','----- DH ------','----- V -------';
+			DO _j=1,N.CH(_m);
+				_dzFullChL800 = _dzFullChL800 + DZ.CH(_m)(_j);
+				_dhFullChL800 = _dhFullChL800 + DH.CH(_m)(_j);
+				_vFullChL800 = _vFullChL800 + V.CH(_m)(_j);
+				PRINT _j,DZ.CH(_m)(_j),DH.CH(_m)(_j),V.CH(_m)(_j);
+			ENDDO
+			PRINT 'Cl','----- S -------','----- D -------','---- Type -----',
+				'----- DэквS ---';
+			DO _j=1,N.CH(_m);
+				PRINT _j,S.CH(_m)(_j),D.CH(_m)(_j),TYPE.CH(_m)(_j),'             ',
+					((4*S.CH(_m)(_j))/_pi)**0.5;
+			ENDDO
+			PRINT 'Jc','---- DZJ ------','---- SJ -------','---- JUN ------',
+				'---- DэквSJ ---';
+			DO _j=1,N.CH(_m)+1;
+				PRINT _j,DZJ.CH(_m)(_j),SJ.CH(_m)(_j),JUN.CH(_m)(_j),'             ',
+					((4*SJ.CH(_m)(_j))/_pi)**0.5;
+			ENDDO
+			IF _diag > 1 THEN ! вывод исходных значений
+				PRINT 'Cl','----- P -------','----- T1 ------','---- T2 -------';
+				DO _j=1,N.CH(_m);
+					PRINT _j,P.CH(_m)(_j),T.CH(_m)(1,_j)-_tOffset,
+						T.CH(_m)(2,_j)-_tOffset;
+				ENDDO
+				PRINT 'Cl','----- VOID ----','----- XNG3 ----','---- XNG4 -----';
+				DO _j=1,N.CH(_m);
+					PRINT _j,VOID.CH(_m)(_j),XNG.CH(_m)(3,_j),XNG.CH(_m)(4,_j);
+				ENDDO
+				PRINT 'Cl','----- XNF3 ----','---- XNF4 -----','---------------';
+				DO _j=1,N.CH(_m);
+					PRINT _j,XNF.CH(_m)(3,_j),XNF.CH(_m)(4,_j);
+				ENDDO
+			ENDIF
+			PRINT '---------------------------------------------------';
+			PRINT 'Full length    ',_dzFullChL800;
+			PRINT 'Full height dif',_dhFullChL800;
+			PRINT 'Full volume    ',_vFullChL800;
+			! PRINT 'Минимальный проход    ',MINA( S.CH(_m)(1:N.CH(_m)) );
+			! PRINT 'Максимальный проход   ',MAXA( S.CH(_m)(1:N.CH(_m)) );
+			! PRINT 'Минимальный Dг        ',MINA( D.CH(_m)(1:N.CH(_m)) );
+			! PRINT 'Максимальный Dг       ',MAXA( D.CH(_m)(1:N.CH(_m)) );
+		ENDDO
+		PRINT ' ';
+		PRINT '*** HCS DATA L800 ***';
+		DO _i=1,_numLayHcsL800;
+			_m = _hcsLayL800(_i)+_hcsOfstL800;
+			_n = _hcsLayL800(_i);
+			PRINT '- HCS',_m,' in model L800',_n;
+			! Геометрия ТК
+			_dzFullHcsL800 = 0.;
+			_f1FullHcsL800 = 0.; 
+			_f2FullHcsL800 = 0.; 
+			PRINT 'Cl','----- DFZ ----- ','----- DF1 ----- ','---- DF2 ------';
+				DO _j=1,N.HCS(_m);      
+					_dzFullHcsL800 = _dzFullHcsL800 + DFZ.HCS(_m)(_j);
+					_f1FullHcsL800 = _f1FullHcsL800 + DF.HCS(_m)(1,_j);
+					_f2FullHcsL800 = _f2FullHcsL800 + DF.HCS(_m)(2,_j);
+					PRINT _j,DFZ.HCS(_m)(_j),DF.HCS(_m)(1,_j),DF.HCS(_m)(2,_j);
+				ENDDO
+			PRINT '---------------------------------------------------';
+			PRINT 'Full length      ',_dzFullHcsL800;
+			PRINT 'Surf 1 area      ',_f1FullHcsL800;
+			PRINT 'Surf 2 area      ',_f2FullHcsL800;
+			PRINT 'Geom mult B      ',B.HCS(_m);
+			PRINT 'Coeff. ALM-1     ',ALM.HCS(_m)(1);
+			PRINT 'Coeff. ALM-2     ',ALM.HCS(_m)(2);
+		ENDDO
+		PRINT ' ';
+		PRINT '*** SLVES DATA L800 ***';
+		DO _i=1,_numLaySlvL800;
+			_m = _slvLayL800(_i)+_slvOfstL800;
+			_n = _slvLayL800(_i);
+			PRINT '- SLVES',_m,' in model L800',_n;
+			! Геометрия SLVES
+			PRINT 'Full height      ',H.SLVES(_m)(NH.SLVES(_m));
+			PRINT 'Full volume      ',V.SLVES(_m)(NH.SLVES(_m));
+			PRINT 'Water level      ',HL.SLVES(_m);
+			PRINT 'Dg eq tubes      ',D.SLVES(_m);
+			IF NP.SLVES(_m)>0 THEN 
+			PRINT 'Connect.point hgt';
+				DO _j=1,NP.SLVES(_m);
+					PRINT '                 ',HP.SLVES(_m)(_j);
+				ENDDO
+			ENDIF
+			IF _diag > 1 THEN ! вывод исходных значений
+				PRINT 'T1,2   ',T.SLVES(_m)(1)-_tOffset,T.SLVES(_m)(2)-_tOffset;
+				PRINT 'P      ',P.SLVES(_m);
+				PRINT 'XNG3,4 ',XNG.SLVES(_m)(3),XNG.SLVES(_m)(4);
+				PRINT 'XNF3,4 ',XNF.SLVES(_m)(3),XNF.SLVES(_m)(4);
+			ENDIF
+		ENDDO
+		PRINT ' ';
+		!PRINT '*** JN DATA L800 ***';
+		!DO _i=1,_numLayJnL800;
+		!  _m = _jnLayL800(_i)+_jnOfstL800;
+		!  _n = _jnLayL800(_i);
+		!  PRINT '- JN',_m,' in model L800',_n;
+		!  ! Геометрия JN
+		!  PRINT 'Height diff.     ',DH.JN(_m);
+		!  PRINT 'CSI 1,2          ',CSI1.JN(_m),CSI2.JN(_m);
+		!  PRINT 'DZ               ',DZ.JN(_m);
+		!  PRINT 'S                ',S.JN(_m);
+		!  PRINT 'Smin             ',SMIN.JN(_m);
+		!ENDDO
+		!PRINT ' ';
+		PRINT '*** LR DATA L800 ***';
+		DO _i=1,_numLayLrL800;
+			_m = _lrLayL800(_i)+_lrOfstL800;
+			_n = _lrLayL800(_i);
+			PRINT '- LR',_m,' in model L800',_n;
+			! Геометрия LR
+			PRINT 'CSI 1,2          ',CSI1.LR(_m),CSI2.LR(_m);
+		ENDDO
+		PRINT ' ';
+		PRINT '*** VAL DATA L800 ***';
+		DO _i=1,_numLayValL800;
+			_m = _valLayL800(_i)+_valOfstL800;
+			_n = _valLayL800(_i);
+			PRINT '- VAL',_m,' in model L800',_n;
+			! Геометрия VAL
+			PRINT 'CSI 1,2          ',CSI1.VAL(_m),CSI2.VAL(_m);
+			PRINT 'S                ',S.VAL(_m);
+		ENDDO
+		PRINT ' ';
+		! PRINT '=== MODEL L800 GEOMETRY DIAGNOSTICS END ===';
+	ENDIF
+	
+	_timeMon = TAU;
+	! Диагностика параметров во время счета
+	IF( (_timeMon - _timeMonOld) >= _monPer ) THEN
+		PRINT '=== MODEL L800 CALCULATION DIAGNOSTICS ===';
+		PRINT 'TAU = ',TAU,'  DT = ',DT;
+		PRINT '=== CH DATA L800 ===';
+		DO _i=1,_numLayChL800;
+			_k = _chLayL800(_i)+_chOfstL800;
+			_n = _chLayL800(_i);
+			PRINT ' TAU = ',TAU,'  DT = ',DT;
+			PRINT '- CH',_k,' in model L800',_n;
+			PRINT 'Cl','----- P -------','---- VOID -----','---- T1 -------',
+				'---- DEN1 ------';
+			_mChL800 = 0.;
+			DO _j=1,_nChL800(_n);
+				! Расчет массы канала
+				_mChL800 = _mChL800 + 
+					V.CH(_k)(_j)*( VOID.CH(_k)(_j)*DEN.CH(_k)(2,_j) + 
+					(1.-VOID.CH(_k)(_j))*DEN.CH(_k)(1,_j) );
+				PRINT _j,P.CH(_k)(_j),VOID.CH(_k)(_j),T.CH(_k)(1,_j)-_tOffset,
+					DEN.CH(_k)(1,_j);
+			ENDDO
+			PRINT 'Cl','---- T2 -------','---- DEN2 ------','---- XNG3 -----',
+				'---- XNG4 -----';
+			DO _j=1,_nChL800(_n);
+				PRINT _j,T.CH(_k)(2,_j)-_tOffset,DEN.CH(_k)(2,_j),XNG.CH(_k)(3,_j),
+					XNG.CH(_k)(4,_j);
+			ENDDO
+			PRINT 'Jc','---- CFLw -----','---- CFLs -----';
+			DO _j=1,_nChL800(_n)+1;
+				IF("($W.CH(_k)(1,_j),1) < -1.e-13 | 
+					"($W.CH(_k)(1,_j),1) > 1.e-13) THEN
+					_x = DT*W.CH(_k)(1,_j)/DZJ.CH(_k)(_j);
+				ELSE
+					_x = -888.;
+				ENDIF
+				IF("($W.CH(_k)(2,_j),2) < -1e-13 | 
+					"($W.CH(_k)(2,_j),2) > 1e-13) THEN
+					_y = DT*W.CH(_k)(2,_j)/DZJ.CH(_k)(_j);
+				ELSE
+					_y = -888.;
+				ENDIF
+				PRINT _j,_x,_y;
+			ENDDO
+			PRINT 'Jc','---- Gwater ---','---- Gsteam ---','---- Gmix -----',
+				'---- FRWw -----';
+			DO _j=1,_nChL800(_n)+1;
+				PRINT _j,"($W.CH(_k)(1,_j),1),"($W.CH(_k)(2,_j),2),
+					"($W.CH(_k)(1,_j),1) + "($W.CH(_k)(2,_j),2),
+					W.CH(_k)(1,_j)*FRW.CH(_k)(1,_j);
+			ENDDO
+			PRINT 'Jc','---- Wwater ---','---- Wsteam ---','---- MAPJ -----',
+				'---- FRWs -----';
+			DO _j=1,_nChL800(_n)+1;
+				PRINT _j,W.CH(_k)(1,_j),W.CH(_k)(2,_j),MAPJ.CH(_k)(_j),
+					'              ',W.CH(_k)(2,_j)*FRW.CH(_k)(2,_j);
+			ENDDO
+			PRINT '-- Mass CH = ',_mChL800;
+		ENDDO  
+		PRINT ' ';
+		PRINT '=== HCS DATA L800 ===';
+		DO _i=1,_numLayHcsL800;
+			_k = _hcsLayL800(_i)+_hcsOfstL800;
+			_n = _hcsLayL800(_i);
+			PRINT ' TAU = ',TAU,'  DT = ',DT;
+			PRINT '- HCS',_k,' in model L800',_n;
+			PRINT 'Cl','----- Tw1 -----','---- Tw2 ------','---- ALW1 -----';
+			DO _j=1,_nHcsL800(_k-_hcsOfstL800);
+				PRINT _j,TW.HCS(_k)(1,_j)-_tOffset,TW.HCS(_k)(2,_j)-_tOffset,
+					ALW.HCS(_k)(1,_j);
+			ENDDO
+			PRINT 'Cl','---- ALW2 -----','---- Qw1-1 ----','---- Qw1-2 ----';
+			_x = 0.;_y = 0.;  ! Мощности
+			DO _j=1,_nHcsL800(_k-_hcsOfstL800);
+				_x = _x + QW.HCS(_k)(1,_j)+QW.HCS(_k)(2,_j);
+				_y = _y + QW.HCS(_k)(3,_j)+QW.HCS(_k)(4,_j);
+				PRINT _j,ALW.HCS(_k)(2,_j),QW.HCS(_k)(1,_j),QW.HCS(_k)(2,_j);
+			ENDDO
+			PRINT 'Cl','---- Qw2-1 ----','---- Qw2-2 ----','---- Mod1 -----';
+			DO _j=1,_nHcsL800(_k-_hcsOfstL800);
+				PRINT _j,QW.HCS(_k)(3,_j),QW.HCS(_k)(4,_j),MOD.HCS(_k)(1,_j);
+			ENDDO
+			PRINT 'Cl','---- Mod2 -----';
+			DO _j=1,_nHcsL800(_k-_hcsOfstL800);
+				PRINT _j,MOD.HCS(_k)(2,_j);
+			ENDDO
+			PRINT 'Total power Qw/1, Qw/2:',_x,_y;
+		ENDDO  
+		PRINT ' ';
+		PRINT '=== SLVES DATA L800 ===';
+		DO _i=1,_numLaySlvL800;
+			_k = _slvLayL800(_i)+_slvOfstL800;
+			_n = _slvLayL800(_i);
+			PRINT ' TAU = ',TAU,'  DT = ',DT;
+			PRINT '- SLVES',_k,' in model L800',_n;
+			PRINT '----- P -------','---- T1 -------','---- T2 -------';
+			PRINT P.SLVES(_k),T.SLVES(_k)(1)-_tOffset,T.SLVES(_k)(2)-_tOffset;
+			PRINT '----- HL ------','---- EH1 ------','---- EH2 ------';
+			PRINT HL.SLVES(_k),EH.SLVES(_k)(1),EH.SLVES(_k)(2);
+			PRINT '----- VOIDL ---','---- Q1 -------','---- Q2 -------';
+			PRINT VOIDL.SLVES(_k),Q.SLVES(_k)(1),Q.SLVES(_k)(2);
+			PRINT '----- M1 ------','---- TS1 ------','---- GEN1 -----';
+			PRINT M.SLVES(_k)(1),TS.SLVES(_k)(1),GEN.SLVES(_k)(1);        
+		ENDDO
+		PRINT ' ';
+		!PRINT '=== JN DATA L800 ===';
+		!PRINT ' TAU = ',TAU,'  DT = ',DT;
+		!DO _i=1,_numLayJnL800;
+		!  _k = _jnLayL800(_i)+_jnOfstL800;
+		!  _n = _jnLayL800(_i);
+		!  PRINT '- JN',_k,' in model L800',_n;
+		!  PRINT '---- Gw -------','---- Gs -------','---- DELTA ----',
+		!    '----- W -------';
+		!    PRINT "($W.JN(_k),1),"($W.JN(_k),2),DELTA.JN(_k),
+		!      W.JN(_k);
+		!ENDDO
+		!PRINT ' ';
+		PRINT '=== VAL DATA L800 ===';
+		PRINT ' TAU = ',TAU,'  DT = ',DT;
+		DO _i=1,_numLayValL800;
+			_k = _valLayL800(_i)+_valOfstL800;
+			_n = _valLayL800(_i);
+			PRINT '- VAL',_k,' in model L800',_n;
+			PRINT '---- S -------','---- CSI -------';
+			PRINT S.VAL(_k),CSI.VAL(_k);
+		ENDDO
+		PRINT ' ';
+		! PRINT '=== MODEL L800 CALCULATION DIAGNOSTICS END ===';
+	ENDIF
+	
+END
+EVENT _HeatingL800
+	TYPE = 0;
+	REPLACE = 1;
+	TURN_ON = 1;
+	_n = 0;
+	
+	! нагнетание давления в КД-СВД до P_start
+	IF (_setP0_pc_hpv<>0)&(TAU>=_t_1+_t_2) THEN
+		_n = 2+_slvOfstL800;
+		IF (P.SLVES(_n)<_P_start) THEN
+			_n = 5+_valOfstL800;
+			S.VAL(_n) = MIN(S.VAL(_n)+DT*0.05/5., 0.05);
+		ENDIF
+		_n = 2+_slvOfstL800;
+		IF (P.SLVES(_n)>=_P_start) THEN
+			_n = 5+_valOfstL800;
+			S.VAL(_n) = MAX(S.VAL(_n)-DT*0.05/5., 0.0);
+			IF (S.VAL(_n)==0.0) THEN
+				_t_1 = TAU;
+				_t_2 = 200.;
+					_setP0_pc_hpv = _setP0_pc_hpv-1;
+				IF (_setP0_hpv==0) THEN
+					_heat_mod = 1;
+				ENDIF
+			ENDIF
+		ENDIF
+	ENDIF
+	
+	! включение нагревателей
+	IF (_heat_mod==1)&(TAU>=_t_1+10.) THEN
+		_n = 1+_chOfstL800;
+		IF (T.CH(_n)(1,12)<_Ttar) THEN
+			BCOND.BHEAT2(1) = MIN(BCOND.BHEAT2(1)+DT*_q_hpv/1., _q_hpv);
+		ELSE
+			BCOND.BHEAT2(1) = MAX(BCOND.BHEAT2(1)-DT*_q_hpv/1., 0.0);  
+			IF (BCOND.BHEAT2(1)==0.0) THEN
+				! _heat_mod = 0;
+				_setPtar = 1;
+			ENDIF
+		ENDIF
+			
+	ENDIF
+	
+	! подключение компенсирующей группы азотных баллонов
+	_n = 1+_slvOfstL800;
+	_n1 = 2+_slvOfstL800;
+	IF (P.SLVES(_n1)>=P.SLVES(_n)) THEN
+		_n = 3+_valOfstL800;
+		_connect_comp_n2 = 1;
+		S.VAL(_n) = MIN(S.VAL(_n)+DT*1.0/10., 1.0);
+	ENDIF
+	
+	! донагнетнание давления в СВД
+	IF (_setPtar_pc_hpv<>0)&((TAU>=_t_3+_t_4)&(_setPtar==1)) THEN
+		! PRINT 'set pressure';
+		_n = 2+_slvOfstL800;
+		IF (P.SLVES(_n)<_Ptar) THEN
+			_n = 5+_valOfstL800;
+			S.VAL(_n) = MIN(S.VAL(_n)+DT*0.05/5., 0.05);
+		ENDIF
+		_n = 2+_slvOfstL800;
+		IF (P.SLVES(_n)>=_Ptar) THEN
+			_n = 5+_valOfstL800;
+			S.VAL(_n) = MAX(S.VAL(_n)-DT*0.05/5., 0.0);
+			IF (S.VAL(_n)==0.0) THEN
+				_t_3 = TAU;
+				_t_4 = 200.;
+				_setPtar_pc_hpv = 0;
+				_setTtar = 1;
+				IF (_ttar_done==1) THEN
+					_hpv_pc_line = 0;
+					! PRINT '_hpv_pc_line 0';
+				ENDIF
+			ENDIF
+		ENDIF
+	ENDIF
+	
+	! подпитка горячей водой и стравливание холодной линзы
+	_n = 2+_slvOfstL800;
+	_n1 = 1+_chOfstL800;
+	IF (_setTtar==1) THEN
+		_n = 4+_chOfstL800;
+		IF (T.CH(_n)(1,1)<=(_Ttar-1.)) THEN
+			_n = 1+_chOfstL800;
+			IF(P.CH(_n)(12)>=_Ptar-0.5*_atm) THEN
+				_n = 7+_valOfstL800;
+				S.VAL(_n) = MIN(1.,S.VAL(_n)+DT*1./15.);
+				_n = 6+_valOfstL800;
+				S.VAL(_n) = MAX(0.,S.VAL(_n)-DT*1./15.);
+			ELSE
+				_n = 7+_valOfstL800;
+				S.VAL(_n) = MAX(0.,S.VAL(_n)-DT*1./15.);
+				_n = 6+_valOfstL800;
+				S.VAL(_n) = MIN(1.,S.VAL(_n)+DT*1./15.);
+			ENDIF
+		ELSE
+			_n = 6+_valOfstL800;
+			S.VAL(_n) = MAX(0.,S.VAL(_n)-DT*1./15.);
+			_n = 7+_valOfstL800;
+			S.VAL(_n) = MAX(0.,S.VAL(_n)-DT*1./15.);
+			! PRINT S.VAL(_n);
+			IF (S.VAL(_n)==0) THEN
+				_setPtar_pc_hpv = 3;
+				_ttar_done = 1;
+				! PRINT '_ttar_done 1';
+			ENDIF
+		ENDIF
+		
+		
+	ENDIF
+	
+	
+	! отсечение КД от СВД и выключение нагревателей
+	_n = 2+_slvOfstL800;
+	_n1 = 1+_chOfstL800;
+	IF (P.SLVES(_n)>=_Ptar)&(_hpv_pc_line==0) THEN
+		! выключение нагревателей
+		BCOND.BHEAT2(1) = MAX(BCOND.BHEAT2(1)-DT*_q_hpv/0.5, 0.0);
+		! закрытие задвижки
+		_n = 4+_valOfstL800;
+		S.VAL(_n) = MAX(S.VAL(_n)-DT*1.0/1.0, 0.0);
+		_heat_mod = 0;
+		IF (S.VAL(_n)==0) THEN
+			_exp_mod = 1;
+			_t_3 = TAU;
+			TURN_ON = 0;
+		ENDIF
+	ENDIF
+END 
+
+!!eb
+!!bb EVENTs HPGS
+EVENT _MonitorHPGS
+  type = ALW;                  
+  replace = 1;
+  turn_on = 1;
+  ! Диагностика геометрии
+  IF first THEN 
+    first = 0;
+    _timeMon = 0.;
+    _timeMonOld = 0.;
+    PRINT '=== MODEL HPGS GEOMETRY DIAGNOSTICS ===';
+    PRINT '*** CH DATA HPGS ***';
+    DO _i=1,_numLayChHPGS;
+      _m = _chLayHPGS(_i)+_chOfstHPGS;
+      _n = _chLayHPGS(_i);
+      PRINT '- CH',_m,' in model HPGS',_n;
+      ! Геометрия каналов
+      _dzFullChHPGS = 0.;
+      _dhFullChHPGS = 0.;
+      _vFullChHPGS = 0.;
+      PRINT 'Cl','----- DZ ------','----- DH ------','----- V -------';
+      DO _j=1,N.CH(_m);
+        _dzFullChHPGS = _dzFullChHPGS + DZ.CH(_m)(_j);
+        _dhFullChHPGS = _dhFullChHPGS + DH.CH(_m)(_j);
+        _vFullChHPGS = _vFullChHPGS + V.CH(_m)(_j);
+        PRINT _j,DZ.CH(_m)(_j),DH.CH(_m)(_j),V.CH(_m)(_j);
+      ENDDO
+      PRINT 'Cl','----- S -------','----- D -------','---- Type -----',
+        '----- DэквS ---';
+      DO _j=1,N.CH(_m);
+        PRINT _j,S.CH(_m)(_j),D.CH(_m)(_j),TYPE.CH(_m)(_j),'             ',
+          ((4*S.CH(_m)(_j))/_pi)**0.5;
+      ENDDO
+      PRINT 'Jc','---- DZJ ------','---- SJ -------','---- JUN ------',
+        '---- DэквSJ ---';
+      DO _j=1,N.CH(_m)+1;
+        PRINT _j,DZJ.CH(_m)(_j),SJ.CH(_m)(_j),JUN.CH(_m)(_j),'             ',
+          ((4*SJ.CH(_m)(_j))/_pi)**0.5;
+      ENDDO
+      IF _diag > 1 THEN ! вывод исходных значений
+        PRINT 'Cl','----- P -------','----- T1 ------','---- T2 -------';
+        DO _j=1,N.CH(_m);
+          PRINT _j,P.CH(_m)(_j),T.CH(_m)(1,_j)-_tOffset,
+            T.CH(_m)(2,_j)-_tOffset;
+        ENDDO
+        PRINT 'Cl','----- VOID ----','----- XNG3 ----','---- XNG4 -----';
+        DO _j=1,N.CH(_m);
+          PRINT _j,VOID.CH(_m)(_j),XNG.CH(_m)(3,_j),XNG.CH(_m)(4,_j);
+        ENDDO
+        PRINT 'Cl','----- XNF3 ----','---- XNF4 -----','---------------';
+        DO _j=1,N.CH(_m);
+          PRINT _j,XNF.CH(_m)(3,_j),XNF.CH(_m)(4,_j);
+        ENDDO
+      ENDIF
+      PRINT '---------------------------------------------------';
+      PRINT 'Full length    ',_dzFullChHPGS;
+      PRINT 'Full height dif',_dhFullChHPGS;
+      PRINT 'Full volume    ',_vFullChHPGS;
+      ! PRINT 'Минимальный проход    ',MINA( S.CH(_m)(1:N.CH(_m)) );
+      ! PRINT 'Максимальный проход   ',MAXA( S.CH(_m)(1:N.CH(_m)) );
+      ! PRINT 'Минимальный Dг        ',MINA( D.CH(_m)(1:N.CH(_m)) );
+      ! PRINT 'Максимальный Dг       ',MAXA( D.CH(_m)(1:N.CH(_m)) );
+    ENDDO
+    PRINT ' ';
+    PRINT '*** HCS DATA HPGS ***';
+    DO _i=1,_numLayHcsHPGS;
+      _m = _hcsLayHPGS(_i)+_hcsOfstHPGS;
+      _n = _hcsLayHPGS(_i);
+      PRINT '- HCS',_m,' in model HPGS',_n;
+      ! Геометрия ТК
+      _dzFullHcsHPGS = 0.;
+      _f1FullHcsHPGS = 0.; 
+      _f2FullHcsHPGS = 0.; 
+      PRINT 'Cl','----- DFZ ----- ','----- DF1 ----- ','---- DF2 ------';
+        DO _j=1,N.HCS(_m);      
+          _dzFullHcsHPGS = _dzFullHcsHPGS + DFZ.HCS(_m)(_j);
+          _f1FullHcsHPGS = _f1FullHcsHPGS + DF.HCS(_m)(1,_j);
+          _f2FullHcsHPGS = _f2FullHcsHPGS + DF.HCS(_m)(2,_j);
+          PRINT _j,DFZ.HCS(_m)(_j),DF.HCS(_m)(1,_j),DF.HCS(_m)(2,_j);
+        ENDDO
+      PRINT '---------------------------------------------------';
+      PRINT 'Full length      ',_dzFullHcsHPGS;
+      PRINT 'Surf 1 area      ',_f1FullHcsHPGS;
+      PRINT 'Surf 2 area      ',_f2FullHcsHPGS;
+      PRINT 'Geom mult B      ',B.HCS(_m);
+      PRINT 'Coeff. ALM-1     ',ALM.HCS(_m)(1);
+      PRINT 'Coeff. ALM-2     ',ALM.HCS(_m)(2);
+    ENDDO
+    PRINT ' ';
+    PRINT '*** SLVES DATA HPGS ***';
+    DO _i=1,_numLaySlvHPGS;
+      _m = _slvLayHPGS(_i)+_slvOfstHPGS;
+      _n = _slvLayHPGS(_i);
+      PRINT '- SLVES',_m,' in model HPGS',_n;
+      ! Геометрия SLVES
+      PRINT 'Full height      ',H.SLVES(_m)(NH.SLVES(_m));
+      PRINT 'Full volume      ',V.SLVES(_m)(NH.SLVES(_m));
+      PRINT 'Water level      ',HL.SLVES(_m);
+      PRINT 'Dg eq tubes      ',D.SLVES(_m);
+      IF NP.SLVES(_m)>0 THEN 
+      PRINT 'Connect.point hgt';
+        DO _j=1,NP.SLVES(_m);
+          PRINT '                 ',HP.SLVES(_m)(_j);
+        ENDDO
+      ENDIF
+      IF _diag > 1 THEN ! вывод исходных значений
+        PRINT 'T1,2   ',T.SLVES(_m)(1)-_tOffset,T.SLVES(_m)(2)-_tOffset;
+        PRINT 'P      ',P.SLVES(_m);
+        PRINT 'XNG3,4 ',XNG.SLVES(_m)(3),XNG.SLVES(_m)(4);
+        PRINT 'XNF3,4 ',XNF.SLVES(_m)(3),XNF.SLVES(_m)(4);
+      ENDIF
+    ENDDO
+    PRINT ' ';
+    PRINT '*** LR DATA HPGS ***';
+    DO _i=1,_numLayLrHPGS;
+      _m = _lrLayHPGS(_i)+_lrOfstHPGS;
+      _n = _lrLayHPGS(_i);
+      PRINT '- LR',_m,' in model HPGS',_n;
+      ! Геометрия LR
+      PRINT 'CSI 1,2          ',CSI1.LR(_m),CSI2.LR(_m);
+    ENDDO
+    PRINT ' ';
+    PRINT '*** VAL DATA HPGS ***';
+    DO _i=1,_numLayValHPGS;
+      _m = _valLayHPGS(_i)+_valOfstHPGS;
+      _n = _valLayHPGS(_i);
+      PRINT '- VAL',_m,' in model HPGS',_n;
+      ! Геометрия VAL
+      PRINT 'CSI 1,2          ',CSI1.VAL(_m),CSI2.VAL(_m);
+      PRINT 'S                ',S.VAL(_m);
+    ENDDO
+    PRINT ' ';
+	PRINT '=== MODEL HPGS GEOMETRY DIAGNOSTICS END ===';
+  ENDIF
+  
+  _timeMon = TAU;
+  ! Диагностика параметров во время счета
+  IF( (_timeMon - _timeMonOld) >= _monPer ) THEN
+    PRINT '=== MODEL HPGS CALCULATION DIAGNOSTICS ===';
+    PRINT 'TAU = ',TAU,'  DT = ',DT;
+    PRINT '=== CH DATA HPGS ===';
+    DO _i=1,_numLayChHPGS;
+      _k = _chLayHPGS(_i)+_chOfstHPGS;
+      _n = _chLayHPGS(_i);
+      PRINT ' TAU = ',TAU,'  DT = ',DT;
+      PRINT '- CH',_k,' in model HPGS',_n;
+      PRINT 'Cl','----- P -------','---- VOID -----','---- T1 -------',
+        '---- DEN1 ------';
+      _mChHPGS = 0.;
+      DO _j=1,_nChHPGS(_n);
+        ! Расчет массы канала
+        _mChHPGS = _mChHPGS + 
+          V.CH(_k)(_j)*( VOID.CH(_k)(_j)*DEN.CH(_k)(2,_j) + 
+          (1.-VOID.CH(_k)(_j))*DEN.CH(_k)(1,_j) );
+        PRINT _j,P.CH(_k)(_j),VOID.CH(_k)(_j),T.CH(_k)(1,_j)-_tOffset,
+          DEN.CH(_k)(1,_j);
+      ENDDO
+      PRINT 'Cl','---- T2 -------','---- DEN2 ------','---- XNG3 -----',
+        '---- XNG4 -----';
+      DO _j=1,_nChHPGS(_n);
+        PRINT _j,T.CH(_k)(2,_j)-_tOffset,DEN.CH(_k)(2,_j),XNG.CH(_k)(3,_j),
+          XNG.CH(_k)(4,_j);
+      ENDDO
+      PRINT 'Jc','---- CFLw -----','---- CFLs -----';
+      DO _j=1,_nChHPGS(_n)+1;
+        IF("($W.CH(_k)(1,_j),1) < -1.e-13 | 
+          "($W.CH(_k)(1,_j),1) > 1.e-13) THEN
+          _x = DT*W.CH(_k)(1,_j)/DZJ.CH(_k)(_j);
+        ELSE
+          _x = -888.;
+        ENDIF
+        IF("($W.CH(_k)(2,_j),2) < -1e-13 | 
+          "($W.CH(_k)(2,_j),2) > 1e-13) THEN
+          _y = DT*W.CH(_k)(2,_j)/DZJ.CH(_k)(_j);
+        ELSE
+          _y = -888.;
+        ENDIF
+        PRINT _j,_x,_y;
+      ENDDO
+      PRINT 'Jc','---- Gwater ---','---- Gsteam ---','---- Gmix -----',
+        '---- FRWw -----';
+      DO _j=1,_nChHPGS(_n)+1;
+        PRINT _j,"($W.CH(_k)(1,_j),1),"($W.CH(_k)(2,_j),2),
+          "($W.CH(_k)(1,_j),1) + "($W.CH(_k)(2,_j),2),
+          W.CH(_k)(1,_j)*FRW.CH(_k)(1,_j);
+      ENDDO
+      PRINT 'Jc','---- Wwater ---','---- Wsteam ---','---- MAPJ -----',
+        '---- FRWs -----';
+      DO _j=1,_nChHPGS(_n)+1;
+        PRINT _j,W.CH(_k)(1,_j),W.CH(_k)(2,_j),MAPJ.CH(_k)(_j),
+          '              ',W.CH(_k)(2,_j)*FRW.CH(_k)(2,_j);
+      ENDDO
+      PRINT '-- Mass CH = ',_mChHPGS;
+    ENDDO  
+    PRINT ' ';
+    PRINT '=== HCS DATA HPGS ===';
+    PRINT ' TAU = ',TAU,'  DT = ',DT;
+    DO _i=1,_numLayHcsHPGS;
+      _k = _hcsLayHPGS(_i)+_hcsOfstHPGS;
+      _n = _hcsLayHPGS(_i);
+      PRINT ' TAU = ',TAU,'  DT = ',DT;
+      PRINT '- HCS',_k,' in model HPGS',_n;
+      PRINT 'Cl','----- Tw1 -----','---- Tw2 ------','---- ALW1 -----';
+      DO _j=1,_nHcsHPGS(_k-_hcsOfstHPGS);
+        PRINT _j,TW.HCS(_k)(1,_j)-_tOffset,TW.HCS(_k)(2,_j)-_tOffset,
+          ALW.HCS(_k)(1,_j);
+      ENDDO
+      PRINT 'Cl','---- ALW2 -----','---- Qw1-1 ----','---- Qw1-2 ----';
+      _x = 0.;_y = 0.;  ! Мощности
+      DO _j=1,_nHcsHPGS(_k-_hcsOfstHPGS);
+        _x = _x + QW.HCS(_k)(1,_j)+QW.HCS(_k)(2,_j);
+        _y = _y + QW.HCS(_k)(3,_j)+QW.HCS(_k)(4,_j);
+        PRINT _j,ALW.HCS(_k)(2,_j),QW.HCS(_k)(1,_j),QW.HCS(_k)(2,_j);
+      ENDDO
+      PRINT 'Cl','---- Qw2-1 ----','---- Qw2-2 ----','---- Mod1 -----';
+      DO _j=1,_nHcsHPGS(_k-_hcsOfstHPGS);
+        PRINT _j,QW.HCS(_k)(3,_j),QW.HCS(_k)(4,_j),MOD.HCS(_k)(1,_j);
+      ENDDO
+      PRINT 'Cl','---- Mod2 -----';
+      DO _j=1,_nHcsHPGS(_k-_hcsOfstHPGS);
+        PRINT _j,MOD.HCS(_k)(2,_j);
+      ENDDO
+      PRINT 'Total power Qw/1, Qw/2:',_x,_y;
+    ENDDO  
+    PRINT ' ';
+    PRINT '=== SLVES DATA HPGS ===';
+    DO _i=1,_numLaySlvHPGS;
+      _k = _slvLayHPGS(_i)+_slvOfstHPGS;
+      _n = _slvLayHPGS(_i);
+      PRINT ' TAU = ',TAU,'  DT = ',DT;
+      PRINT '- SLVES',_k,' in model HPGS',_n;
+      PRINT '----- P -------','---- T1 -------','---- T2 -------';
+      PRINT P.SLVES(_k),T.SLVES(_k)(1)-_tOffset,T.SLVES(_k)(2)-_tOffset;
+      PRINT '----- HL ------','---- EH1 ------','---- EH2 ------';
+      PRINT HL.SLVES(_k),EH.SLVES(_k)(1),EH.SLVES(_k)(2);
+      PRINT '----- VOIDL ---','---- Q1 -------','---- Q2 -------';
+      PRINT VOIDL.SLVES(_k),Q.SLVES(_k)(1),Q.SLVES(_k)(2);
+      PRINT '----- M1 ------','---- TS1 ------','---- GEN1 -----';
+      PRINT M.SLVES(_k)(1),TS.SLVES(_k)(1),GEN.SLVES(_k)(1);        
+    ENDDO
+    PRINT ' ';
+    PRINT '=== VAL DATA HPGS ===';
+    PRINT ' TAU = ',TAU,'  DT = ',DT;
+    DO _i=1,_numLayValHPGS;
+      _k = _valLayHPGS(_i)+_valOfstHPGS;
+      _n = _valLayHPGS(_i);
+      PRINT '- VAL',_k,' in model HPGS',_n;
+      PRINT '---- S -------','---- CSI -------';
+      PRINT S.VAL(_k),CSI.VAL(_k);
+    ENDDO
+    PRINT '=== MODEL HPGS CALCULATION DIAGNOSTICS END ===';
+  ENDIF
+  
+END
+EVENT _CompHPGS
+  TYPE = 0;
+  REPLACE = 1;
+  TURN_ON = 1;
+  
+  _Gin := 0.;
+  
+  _n = 2+_chOfstHPGS;  
+  _Gin = 0.067*(1.*_atm/P.CH(_n)(3))*
+    GM6P1('PTX',P.CH(_n)(3),T.CH(_n)(2,3),$_xgAir,3);
+  
+  ! включаем компрессор
+  _n = 1+_slvOfstHPGS;
+  IF (P.SLVES(_n)<0.98*_Pwork_hpgs) THEN
+    _n = 1+_smOfstHPGS;
+    GIN.SMASS_T(_n)(2) = MIN(GIN.SMASS_T(_n)(2)+DT*_Gin/2.,_Gin);
+  ENDIF
+  
+  ! выключаем компрессор
+  _n = 1+_slvOfstHPGS;
+  IF (P.SLVES(_n)>=_Pwork_hpgs) THEN
+    _n = 1+_smOfstHPGS;
+    GIN.SMASS_T(_n)(2) = MAX(GIN.SMASS_T(_n)(2)-DT*_Gin/2.,0.0);
+  ENDIF
+END
+!!eb
+!!bb EVENTs Общие
+EVENT _CalcSensor     ! Измеряемые значения
+	type = REG;
+	replace = 1;
+	turn_on = 1;
+	IF first THEN
+		first = 0;
+	ENDIF
+	
+	!!bb Датчики L800
+	! CH1
+	_n = 1+_chOfstL800;
+	_l800_sens_CH1(1:_nChL800(1))=P.CH(_n)(1:_nChL800(1));
+	_l800_sens_CH1(1:_nChL800(1))=_l800_sens_CH1(1:_nChL800(1))*(1./_MPa);
+	_l800_sens_CH1(1*_nChL800(1)+1:2*_nChL800(1))=T.CH(_n)(1,1:_nChL800(1));
+	_l800_sens_CH1(1*_nChL800(1)+1:2*_nChL800(1))=
+	_l800_sens_CH1(1*_nChL800(1)+1:2*_nChL800(1))-_t0C;
+	_l800_sens_CH1(2*_nChL800(1)+1:3*_nChL800(1))=T.CH(_n)(2,1:_nChL800(1));
+	_l800_sens_CH1(2*_nChL800(1)+1:3*_nChL800(1))=
+	_l800_sens_CH1(2*_nChL800(1)+1:3*_nChL800(1))-_t0C;
+	_l800_sens_CH1(3*_nChL800(1)+1:4*_nChL800(1))=VOID.CH(_n)(1:_nChL800(1));
+	_l800_sens_CH1(4*_nChL800(1)+1:5*_nChL800(1))=XNG.CH(_n)(3,1:_nChL800(1));
+	_i = 0;
+	DO _i = 1,_nChL800(1)+1;
+	_l800_sens_CH1(5*_nChL800(1)+_i)="($W.CH(_n)(1,_i),3);
+	ENDDO
+	_i = 0;
+	DO _i = 1,_nChL800(1);
+	_l800_sens_CH1(6*_nChL800(1)+_i+1)=WS1P1(1,'P',P.CH(_n)(_i),2)-_t0C;
+	ENDDO
+	
+	! CH2
+	_n = 2+_chOfstL800;
+	_l800_sens_CH2(1:_nChL800(2))=P.CH(_n)(1:_nChL800(2));
+	_l800_sens_CH2(1:_nChL800(2))=_l800_sens_CH2(1:_nChL800(2))*(1./_MPa);
+	_l800_sens_CH2(1*_nChL800(2)+1:2*_nChL800(2))=T.CH(_n)(1,1:_nChL800(2));
+	_l800_sens_CH2(1*_nChL800(2)+1:2*_nChL800(2))=
+	_l800_sens_CH2(1*_nChL800(2)+1:2*_nChL800(2))-_t0C;
+	_l800_sens_CH2(2*_nChL800(2)+1:3*_nChL800(2))=T.CH(_n)(2,1:_nChL800(2));
+	_l800_sens_CH2(2*_nChL800(2)+1:3*_nChL800(2))=
+	_l800_sens_CH2(2*_nChL800(2)+1:3*_nChL800(2))-_t0C;
+	_l800_sens_CH2(3*_nChL800(2)+1:4*_nChL800(2))=VOID.CH(_n)(1:_nChL800(2));
+	_l800_sens_CH2(4*_nChL800(2)+1:5*_nChL800(2))=XNG.CH(_n)(3,1:_nChL800(2));
+	_i = 0;
+	DO _i = 1,_nChL800(2)+1;
+	_l800_sens_CH2(5*_nChL800(2)+_i)="($W.CH(_n)(1,_i),3);
+	ENDDO
+	_i = 0;
+	DO _i = 1,_nChL800(2);
+	_l800_sens_CH2(6*_nChL800(2)+_i+1)=WS1P1(1,'P',P.CH(_n)(_i),2)-_t0C;
+	ENDDO
+	
+	! CH3
+	_n = 3+_chOfstL800;
+	_l800_sens_CH3(1:_nChL800(3))=P.CH(_n)(1:_nChL800(3));
+	_l800_sens_CH3(1:_nChL800(3))=_l800_sens_CH3(1:_nChL800(3))*(1./_MPa);
+	_l800_sens_CH3(1*_nChL800(3)+1:2*_nChL800(3))=T.CH(_n)(1,1:_nChL800(3));
+	_l800_sens_CH3(1*_nChL800(3)+1:2*_nChL800(3))=
+	_l800_sens_CH3(1*_nChL800(3)+1:2*_nChL800(3))-_t0C;
+	_l800_sens_CH3(2*_nChL800(3)+1:3*_nChL800(3))=T.CH(_n)(2,1:_nChL800(3));
+	_l800_sens_CH3(2*_nChL800(3)+1:3*_nChL800(3))=
+	_l800_sens_CH3(2*_nChL800(3)+1:3*_nChL800(3))-_t0C;
+	_l800_sens_CH3(3*_nChL800(3)+1:4*_nChL800(3))=VOID.CH(_n)(1:_nChL800(3));
+	_l800_sens_CH3(4*_nChL800(3)+1:5*_nChL800(3))=XNG.CH(_n)(3,1:_nChL800(3));
+	_i = 0;
+	DO _i = 1,_nChL800(3)+1;
+	_l800_sens_CH3(5*_nChL800(3)+_i)="($W.CH(_n)(1,_i),3);
+	ENDDO
+	_i = 0;
+	DO _i = 1,_nChL800(3);
+	_l800_sens_CH3(6*_nChL800(3)+_i+1)=WS1P1(1,'P',P.CH(_n)(_i),2)-_t0C;
+	ENDDO
+	
+	! CH4
+	_n = 4+_chOfstL800;
+	_l800_sens_CH4(1:_nChL800(4))=P.CH(_n)(1:_nChL800(4));
+	_l800_sens_CH4(1:_nChL800(4))=_l800_sens_CH4(1:_nChL800(4))*(1./_MPa);
+	_l800_sens_CH4(1*_nChL800(4)+1:2*_nChL800(4))=T.CH(_n)(1,1:_nChL800(4));
+	_l800_sens_CH4(1*_nChL800(4)+1:2*_nChL800(4))=
+	_l800_sens_CH4(1*_nChL800(4)+1:2*_nChL800(4))-_t0C;
+	_l800_sens_CH4(2*_nChL800(4)+1:3*_nChL800(4))=T.CH(_n)(2,1:_nChL800(4));
+	_l800_sens_CH4(2*_nChL800(4)+1:3*_nChL800(4))=
+	_l800_sens_CH4(2*_nChL800(4)+1:3*_nChL800(4))-_t0C;
+	_l800_sens_CH4(3*_nChL800(4)+1:4*_nChL800(4))=VOID.CH(_n)(1:_nChL800(4));
+	_l800_sens_CH4(4*_nChL800(4)+1:5*_nChL800(4))=XNG.CH(_n)(3,1:_nChL800(4));
+	_i = 0;
+	DO _i = 1,_nChL800(4)+1;
+	_l800_sens_CH4(5*_nChL800(4)+_i)="($W.CH(_n)(1,_i),3);
+	ENDDO
+	_i = 0;
+	DO _i = 1,_nChL800(4);
+	_l800_sens_CH4(6*_nChL800(4)+_i+1)=WS1P1(1,'P',P.CH(_n)(_i),2)-_t0C;
+	ENDDO
+	
+	! CH5
+	_n = 5+_chOfstL800;
+	_l800_sens_CH5(1:_nChL800(5))=P.CH(_n)(1:_nChL800(5));
+	_l800_sens_CH5(1:_nChL800(5))=_l800_sens_CH5(1:_nChL800(5))*(1./_MPa);
+	_l800_sens_CH5(1*_nChL800(5)+1:2*_nChL800(5))=T.CH(_n)(1,1:_nChL800(5));
+	_l800_sens_CH5(1*_nChL800(5)+1:2*_nChL800(5))=
+	_l800_sens_CH5(1*_nChL800(5)+1:2*_nChL800(5))-_t0C;
+	_l800_sens_CH5(2*_nChL800(5)+1:3*_nChL800(5))=T.CH(_n)(2,1:_nChL800(5));
+	_l800_sens_CH5(2*_nChL800(5)+1:3*_nChL800(5))=
+	_l800_sens_CH5(2*_nChL800(5)+1:3*_nChL800(5))-_t0C;
+	_l800_sens_CH5(3*_nChL800(5)+1:4*_nChL800(5))=VOID.CH(_n)(1:_nChL800(5));
+	_l800_sens_CH5(4*_nChL800(5)+1:5*_nChL800(5))=XNG.CH(_n)(3,1:_nChL800(5));
+	_i = 0;
+	DO _i = 1,_nChL800(5)+1;
+	_l800_sens_CH5(5*_nChL800(5)+_i)="($W.CH(_n)(1,_i),3);
+	ENDDO
+	_i = 0;
+	DO _i = 1,_nChL800(5);
+	_l800_sens_CH5(6*_nChL800(5)+_i+1)=WS1P1(1,'P',P.CH(_n)(_i),2)-_t0C;
+	ENDDO
+	
+	! CH6
+	_n = 6+_chOfstL800;
+	_l800_sens_CH6(1:_nChL800(6))=P.CH(_n)(1:_nChL800(6));
+	_l800_sens_CH6(1:_nChL800(6))=_l800_sens_CH6(1:_nChL800(6))*(1./_MPa);
+	_l800_sens_CH6(1*_nChL800(6)+1:2*_nChL800(6))=T.CH(_n)(1,1:_nChL800(6));
+	_l800_sens_CH6(1*_nChL800(6)+1:2*_nChL800(6))=
+	_l800_sens_CH6(1*_nChL800(6)+1:2*_nChL800(6))-_t0C;
+	_l800_sens_CH6(2*_nChL800(6)+1:3*_nChL800(6))=T.CH(_n)(2,1:_nChL800(6));
+	_l800_sens_CH6(2*_nChL800(6)+1:3*_nChL800(6))=
+	_l800_sens_CH6(2*_nChL800(6)+1:3*_nChL800(6))-_t0C;
+	_l800_sens_CH6(3*_nChL800(6)+1:4*_nChL800(6))=
+	VOID.CH(_n)(1:_nChL800(6));
+	_l800_sens_CH6(4*_nChL800(6)+1:5*_nChL800(6))=
+	XNG.CH(_n)(3,1:_nChL800(6));
+	_i = 0;
+	DO _i = 1,_nChL800(6)+1;
+	_l800_sens_CH6(5*_nChL800(6)+_i)="($W.CH(_n)(1,_i),3);
+	ENDDO
+	_i = 0;
+	DO _i = 1,_nChL800(6);
+	_l800_sens_CH6(6*_nChL800(6)+_i+1)=WS1P1(1,'P',P.CH(_n)(_i),2)-_t0C;
+	ENDDO
+	
+	! CH7
+	_n = 7+_chOfstL800;
+	_l800_sens_CH7(1:_nChL800(7))=P.CH(_n)(1:_nChL800(7));
+	_l800_sens_CH7(1:_nChL800(7))=_l800_sens_CH7(1:_nChL800(7))*(1./_MPa);
+	_l800_sens_CH7(1*_nChL800(7)+1:2*_nChL800(7))=T.CH(_n)(1,1:_nChL800(7));
+	_l800_sens_CH7(1*_nChL800(7)+1:2*_nChL800(7))=
+	_l800_sens_CH7(1*_nChL800(7)+1:2*_nChL800(7))-_t0C;
+	_l800_sens_CH7(2*_nChL800(7)+1:3*_nChL800(7))=T.CH(_n)(2,1:_nChL800(7));
+	_l800_sens_CH7(2*_nChL800(7)+1:3*_nChL800(7))=
+	_l800_sens_CH7(2*_nChL800(7)+1:3*_nChL800(7))-_t0C;
+	_l800_sens_CH7(3*_nChL800(7)+1:4*_nChL800(7))=
+	VOID.CH(_n)(1:_nChL800(7));
+	_l800_sens_CH7(4*_nChL800(7)+1:5*_nChL800(7))=
+	XNG.CH(_n)(3,1:_nChL800(7));
+	_i = 0;
+	DO _i = 1,_nChL800(7)+1;
+		_l800_sens_CH7(5*_nChL800(7)+_i)="($W.CH(_n)(1,_i),3);
+	ENDDO
+	_i = 0;
+	DO _i = 1,_nChL800(7);
+		_l800_sens_CH7(6*_nChL800(7)+_i+1)=WS1P1(1,'P',P.CH(_n)(_i),2)-_t0C;
+	ENDDO
+	
+	! CH8
+	_n = 8+_chOfstL800;
+	_l800_sens_CH8(1:_nChL800(8))=P.CH(_n)(1:_nChL800(8));
+	_l800_sens_CH8(1:_nChL800(8))=_l800_sens_CH8(1:_nChL800(8))*(1./_MPa);
+	_l800_sens_CH8(1*_nChL800(8)+1:2*_nChL800(8))=T.CH(_n)(1,1:_nChL800(8));
+	_l800_sens_CH8(1*_nChL800(8)+1:2*_nChL800(8))=
+	_l800_sens_CH8(1*_nChL800(8)+1:2*_nChL800(8))-_t0C;
+	_l800_sens_CH8(2*_nChL800(8)+1:3*_nChL800(8))=T.CH(_n)(2,1:_nChL800(8));
+	_l800_sens_CH8(2*_nChL800(8)+1:3*_nChL800(8))=
+	_l800_sens_CH8(2*_nChL800(8)+1:3*_nChL800(8))-_t0C;
+	_l800_sens_CH8(3*_nChL800(8)+1:4*_nChL800(8))=
+	VOID.CH(_n)(1:_nChL800(8));
+	_l800_sens_CH8(4*_nChL800(8)+1:5*_nChL800(8))=
+	XNG.CH(_n)(3,1:_nChL800(8));
+	_i = 0;
+	DO _i = 1,_nChL800(8)+1;
+	_l800_sens_CH8(5*_nChL800(8)+_i)="($W.CH(_n)(1,_i),3);
+	ENDDO
+	_i = 0;
+	DO _i = 1,_nChL800(8);
+	_l800_sens_CH8(6*_nChL800(8)+_i+1)=WS1P1(1,'P',P.CH(_n)(_i),2)-_t0C;
+	ENDDO
+	!
+	!! CH9
+	!_n = 9+_chOfstL800;
+	!_l800_sens_CH9(1:_nChL800(9))=P.CH(_n)(1:_nChL800(9));
+	!_l800_sens_CH9(1:_nChL800(9))=_l800_sens_CH9(1:_nChL800(9))*(1./_MPa);
+	!_l800_sens_CH9(1*_nChL800(9)+1:2*_nChL800(9))=T.CH(_n)(1,1:_nChL800(9));
+	!_l800_sens_CH9(1*_nChL800(9)+1:2*_nChL800(9))=
+	!_l800_sens_CH9(1*_nChL800(9)+1:2*_nChL800(9))-_t0C;
+	!_l800_sens_CH9(2*_nChL800(9)+1:3*_nChL800(9))=T.CH(_n)(2,1:_nChL800(9));
+	!_l800_sens_CH9(2*_nChL800(9)+1:3*_nChL800(9))=
+	!_l800_sens_CH9(2*_nChL800(9)+1:3*_nChL800(9))-_t0C;
+	!_l800_sens_CH9(3*_nChL800(9)+1:4*_nChL800(9))=
+	!VOID.CH(_n)(1:_nChL800(9));
+	!_l800_sens_CH9(4*_nChL800(9)+1:5*_nChL800(9))=
+	!XNG.CH(_n)(3,1:_nChL800(9));
+	!_i = 0;
+	!DO _i = 1,_nChL800(9)+1;
+	!_l800_sens_CH9(5*_nChL800(9)+_i)="($W.CH(_n)(1,_i),3);
+	!ENDDO
+	! _i = 0;
+	! DO _i = 1,_nChL800(9);
+	! _l800_sens_CH9(6*_nChL800(9)+_i+1)=WS1P1(1,'P',P.CH(_n)(_i),2)-_t0C;
+	! ENDDO
+	!
+	!
+	!! CH10
+	!_n = 10+_chOfstL800;
+	!_l800_sens_CH10(1:_nChL800(10))=P.CH(_n)(1:_nChL800(10));
+	!_l800_sens_CH10(1:_nChL800(10))=_l800_sens_CH10(1:_nChL800(10))*(1./_MPa);
+	!_l800_sens_CH10(1*_nChL800(10)+1:2*_nChL800(10))=T.CH(_n)(1,1:_nChL800(10));
+	!_l800_sens_CH10(1*_nChL800(10)+1:2*_nChL800(10))=
+	!_l800_sens_CH10(1*_nChL800(10)+1:2*_nChL800(10))-_t0C;
+	!_l800_sens_CH10(2*_nChL800(10)+1:3*_nChL800(10))=T.CH(_n)(2,1:_nChL800(10));
+	!_l800_sens_CH10(2*_nChL800(10)+1:3*_nChL800(10))=
+	!_l800_sens_CH10(2*_nChL800(10)+1:3*_nChL800(10))-_t0C;
+	!_l800_sens_CH10(3*_nChL800(10)+1:4*_nChL800(10))=
+	!VOID.CH(_n)(1:_nChL800(10));
+	!_l800_sens_CH10(4*_nChL800(10)+1:5*_nChL800(10))=
+	!XNG.CH(_n)(3,1:_nChL800(10));
+	!_i = 0;
+	!DO _i = 1,_nChL800(10)+1;
+	!_l800_sens_CH10(5*_nChL800(10)+_i)="($W.CH(_n)(1,_i),3);
+	!ENDDO
+	! _i = 0;
+	! DO _i = 1,_nChL800(10);
+	! _l800_sens_CH10(6*_nChL800(10)+_i+1)=WS1P1(1,'P',P.CH(_n)(_i),2)-_t0C;
+	! ENDDO
+	
+	
+	! SLVES1
+	_n = 1+_slvOfstL800;
+	_l800_sens_SLV1(1)=P.SLVES(_n)/_MPa;
+	_l800_sens_SLV1(2)=T.SLVES(_n)(1)-_t0C;
+	_l800_sens_SLV1(3)=T.SLVES(_n)(2)-_t0C;
+	_l800_sens_SLV1(4)=WS1P1(1,'P',P.SLVES(_n),2)-_t0C;
+	_l800_sens_SLV1(5)=XNG.SLVES(_n)(3);
+	_l800_sens_SLV1(6)=HL.SLVES(_n);  
+	
+	! SLVES2
+	_n = 2+_slvOfstL800;
+	_l800_sens_SLV2(1)=P.SLVES(_n)/_MPa;
+	_l800_sens_SLV2(2)=T.SLVES(_n)(1)-_t0C;
+	_l800_sens_SLV2(3)=T.SLVES(_n)(2)-_t0C;
+	_l800_sens_SLV2(4)=WS1P1(1,'P',P.SLVES(_n),2)-_t0C;
+	_l800_sens_SLV2(5)=XNG.SLVES(_n)(3);
+	_l800_sens_SLV2(6)=HL.SLVES(_n);  
+	
+	! SLVES3
+	! _n = 3+_slvOfstL800;
+	! _l800_sens_SLV3(1)=P.SLVES(_n)/_MPa;
+	! _l800_sens_SLV3(2)=T.SLVES(_n)(1)-_t0C;
+	! _l800_sens_SLV3(3)=T.SLVES(_n)(2)-_t0C;
+	! _l800_sens_SLV3(4)=WS1P1(1,'P',P.SLVES(_n),2)-_t0C;
+	! _l800_sens_SLV3(5)=XNG.SLVES(_n)(3);
+	! _l800_sens_SLV3(6)=HL.SLVES(_n);  
+	
+	! Положение задвижек
+	DO _i = 1+_valOfstL800,_numValL800+_valOfstL800;
+		_l800_sens_VALs(_i-_valOfstL800) = S.VAL(_i);
+	ENDDO  
+	
+	! КГС задвижек
+	DO _i = 1+_valOfstL800,_numValL800+_valOfstL800;
+		_l800_sens_VALs_csi(_i-_valOfstL800) = CSI.VAL(_i);
+	ENDDO  
+	
+	!!eb
+	  
+  !!bb Датчики HPGS
+  ! CH1 HPGS
+  _n = 1+_chOfstHPGS;
+  _hpgs_sens_CH1(1:_nChHPGS(1))=P.CH(_n)(1:_nChHPGS(1));
+  _hpgs_sens_CH1(1:_nChHPGS(1))=_hpgs_sens_CH1(1:_nChHPGS(1))*(1./_MPa);
+  _hpgs_sens_CH1(1*_nChHPGS(1)+1:2*_nChHPGS(1))=T.CH(_n)(1,1:_nChHPGS(1));
+  _hpgs_sens_CH1(1*_nChHPGS(1)+1:2*_nChHPGS(1))=
+	_hpgs_sens_CH1(1*_nChHPGS(1)+1:2*_nChHPGS(1))-_t0C;
+  _hpgs_sens_CH1(2*_nChHPGS(1)+1:3*_nChHPGS(1))=T.CH(_n)(2,1:_nChHPGS(1));
+  _hpgs_sens_CH1(2*_nChHPGS(1)+1:3*_nChHPGS(1))=
+	_hpgs_sens_CH1(2*_nChHPGS(1)+1:3*_nChHPGS(1))-_t0C;
+  _hpgs_sens_CH1(3*_nChHPGS(1)+1:4*_nChHPGS(1))=VOID.CH(_n)(1:_nChHPGS(1));
+  _hpgs_sens_CH1(4*_nChHPGS(1)+1:5*_nChHPGS(1))=XNG.CH(_n)(3,1:_nChHPGS(1));
+  _i = 0;
+  DO _i = 1,_nChHPGS(1)+1;
+		_hpgs_sens_CH1(5*_nChHPGS(1)+_i)="($W.CH(_n)(1,_i),3);
+  ENDDO
+  _i = 0;
+  DO _i = 1,_nChHPGS(1);
+		_hpgs_sens_CH1(6*_nChHPGS(1)+_i+1)=WS1P1(1,'P',P.CH(_n)(_i),2)-_t0C;
+  ENDDO
+  
+  ! CH2 HPGS
+  _n = 2+_chOfstHPGS;
+  _hpgs_sens_CH2(1:_nChHPGS(2))=P.CH(_n)(1:_nChHPGS(2));
+  _hpgs_sens_CH2(1:_nChHPGS(2))=_hpgs_sens_CH2(1:_nChHPGS(2))*(1./_MPa);
+  _hpgs_sens_CH2(1*_nChHPGS(2)+1:2*_nChHPGS(2))=T.CH(_n)(1,1:_nChHPGS(2));
+  _hpgs_sens_CH2(1*_nChHPGS(2)+1:2*_nChHPGS(2))=
+	_hpgs_sens_CH2(1*_nChHPGS(2)+1:2*_nChHPGS(2))-_t0C;
+  _hpgs_sens_CH2(2*_nChHPGS(2)+1:3*_nChHPGS(2))=T.CH(_n)(2,1:_nChHPGS(2));
+  _hpgs_sens_CH2(2*_nChHPGS(2)+1:3*_nChHPGS(2))=
+	_hpgs_sens_CH2(2*_nChHPGS(2)+1:3*_nChHPGS(2))-_t0C;
+  _hpgs_sens_CH2(3*_nChHPGS(2)+1:4*_nChHPGS(2))=VOID.CH(_n)(1:_nChHPGS(2));
+  _hpgs_sens_CH2(4*_nChHPGS(2)+1:5*_nChHPGS(2))=XNG.CH(_n)(3,1:_nChHPGS(2));
+  _i = 0;
+  DO _i = 1,_nChHPGS(2)+1;
+		_hpgs_sens_CH2(5*_nChHPGS(2)+_i)="($W.CH(_n)(1,_i),3);
+  ENDDO
+  _i = 0;
+  DO _i = 1,_nChHPGS(2);
+		_hpgs_sens_CH2(6*_nChHPGS(2)+_i+1)=WS1P1(1,'P',P.CH(_n)(_i),2)-_t0C;
+  ENDDO
+  
+  ! SLVES1 HPGS
+  _n = 1+_slvOfstHPGS;
+  _hpgs_sens_SLV1(1)=P.SLVES(_n)/_MPa;
+  _hpgs_sens_SLV1(2)=T.SLVES(_n)(1)-_t0C;
+  _hpgs_sens_SLV1(3)=T.SLVES(_n)(2)-_t0C;
+  _hpgs_sens_SLV1(4)=WS1P1(1,'P',P.SLVES(_n),2)-_t0C;
+  _hpgs_sens_SLV1(5)=XNG.SLVES(_n)(3);
+  _hpgs_sens_SLV1(6)=HL.SLVES(_n);  
+  
+  ! VAL.S HPGS
+  DO _i = 1+_valOfstHPGS,_numValHPGS+_valOfstHPGS;
+		_hpgs_sens_VALS(_i-_valOfstHPGS) = S.VAL(_i);
+  ENDDO  
+  
+  ! VAL.CSI HPGS
+  DO _i = 1+_valOfstHPGS,_numValHPGS+_valOfstHPGS;
+		_hpgs_sens_VALCSI(_i-_valOfstHPGS) = CSI.VAL(_i);
+  ENDDO  
+  
+  !!eb
+  		
+
+END
+EVENT _ReloadMonPer   ! Сброс счетчика вывода мониторинга
+  TYPE = 0;                  
+  REPLACE = 1;
+  TURN_ON = 1;
+  IF FIRST THEN
+    FIRST = 0;
+  ENDIF
+  _timeMon = TAU;
+
+  IF( (_timeMon - _timeMonOld) >= _monPer ) THEN
+    _timeMonOld = _timeMon;
+  ENDIF
+  
+END
+EVENT _DtHandle
+	TYPE = 0;
+	REPLACE = 1;
+	TURN_ON = 1;
+	!IF (TAU>0.2)&(TAU<0.21) THEN
+	!  dt_max = 0.01;
+	!ENDIF
+	IF (TAU>10.)&(TAU<10.1) THEN
+		dt_max = 0.1;
+		dt_out = 10.;
+		dt_sav = 50.;
+		dt_diag = 20.;
+		_monPer = 20.;
+	ENDIF
+	IF (TAU>1000.)&(TAU<25000.) THEN
+		dt_out = 50.;
+		dt_sav = 100.;
+		dt_diag = 50.;
+		_monPer = 50.;
+	ENDIF
+	
+	IF (_exp_mod) THEN
+		dt_out = 0.1;
+		_monPer = 0.1;
+	ENDIF
+	
+	IF (_exp_mod)&(TAU>=_t_3+200.) THEN
+		dt_out = 10.;
+		_monPer = 20.;
+	ENDIF
+	
+	
+END
+EVENT _Actions
+	TYPE = 0;
+	REPLACE = 1;
+	TURN_ON = 1;
+	
+	! начинаем эксперимент
+	IF (_exp_mod==1) THEN
+		TURN_ON._Exp = 1;
+	ELSE
+		TURN_ON._Exp = 0;
+	ENDIF
+	
+END
+EVENT _Exp
+	TYPE = 0;
+	REPLACE = 1;
+	
+	! включаем редуктор ресивер-СВД
+	_n = 1+_cntOfstHPGS;
+	ON.CONT(_n) = 1;
+	
+	IF _exp_mod THEN		
+		! фиксируем время начала проливки
+		IF (FIRST==1) THEN
+			_t1 = TAU;
+			FIRST = 0;
+		ENDIF
+		
+		! открытие задвижки на линии ресивер-СВД
+		IF (TAU>=_t1+20.) THEN
+			_n = 3+_valOfstHPGS;
+			S.VAL(_n) = MIN(S.VAL(_n)+DT*1.0/10.0, 1.0);
+		ENDIF
+		
+		! подрыв мембран
+		_n = 3+_valOfstHPGS;
+		IF (S.VAL(_n)==1.) THEN
+			_n = 2+_valOfstL800;
+			S.VAL(_n) = MIN(S.VAL(_n)+DT*1.0/1.0, 1.0);
+		ENDIF
+	ENDIF
+END
+EVENT _Out1
+	TYPE = 0;
+	REPLACE = 1;
+	
+	IF (TAU - _t_5 > dt_out) THEN
+		_IO(1) = 1512.;
+		_IO(2) = 0.;
+		_IO(3:153) = _l800_sens_CH1(1:150);
+		_IO(154:304) = _l800_sens_CH2(1:150);
+		_IO(305:455) = _l800_sens_CH3(1:150);
+		_IO(456:606) = _l800_sens_CH4(1:150);
+		_IO(607:757) = _l800_sens_CH5(1:150);
+		_IO(758:908) = _l800_sens_CH6(1:150);
+		_IO(909:1059) = _l800_sens_CH7(1:150);
+		_IO(1060:1210) = _l800_sens_CH8(1:150);
+		_IO(1211:1361) = _l800_sens_CH9(1:150);
+		_IO(1362:1512) = _l800_sens_CH10(1:150);
+		
+		_t_5 = TAU;
+		_errorCode = ALIEN(0, 'libkorpy.dll', 'custom_output', 1512, $_IO);
+	ENDIF
+	
+END
+!!eb
+
+!!bb OUTPUTs
+OUTPUT _Out ! Общая процедура вывода
+!!bb Датчики
+WRITE DT;
+
+! WRITE 
+	! ! DT,_tOffset,_pi,_gg,_xgAir,_xgN2,_kgs,_MPa,_kPa,_MWt,_kWt,_atm,
+	! ! dt_out,dt_max,dt_diag,_monPer,dt_sav,restart,_tauRest,
+	! ! L800
+	! _l800_sens_CH1,
+	! _l800_sens_CH2,
+	! _l800_sens_CH3,
+	! _l800_sens_CH4,
+	! _l800_sens_CH5,
+	! _l800_sens_CH6,
+	! _l800_sens_CH7,
+	! _l800_sens_CH8,
+	! _l800_sens_CH9,
+	! _l800_sens_CH10;
+	! ! ! _l800_sens_VALs,
+	! ! ! _l800_sens_VALs_csi,
+	! ! ! _l800_sens_SLV1,
+	! ! ! _l800_sens_SLV2,
+  ! ! ! ! HPGS
+  ! ! ! _hpgs_sens_CH1,
+  ! ! ! _hpgs_sens_CH2,
+  ! ! ! _hpgs_sens_SLV1,
+  ! ! ! _hpgs_sens_VALS,
+  ! ! ! _hpgs_sens_VALCSI;
+
+!!eb
+
+END
+
+!!eb 

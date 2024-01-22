@@ -1,3 +1,0 @@
-Starting KORSAR 21.01.2024  7:46:54,71  
-Source directory: .  
-Finishing KORSAR 21.01.2024  7:46:55,00  
