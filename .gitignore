@@ -36,3 +36,4 @@ log_start.txt
 log_proc.txt
 log_restart.txt
 *.dat
+*.exe
