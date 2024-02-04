@@ -7,6 +7,7 @@ int main()
     double o[2] {};
 
     callfunc("calc", o, a);
+    callfunc("calc", o, a);
 
     std::cout << "out: " << o[0] <<std::endl;
 
